@@ -68,6 +68,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -280,6 +282,7 @@ fun ChatScreen(
     var isStatsExpanded by remember { mutableStateOf(false) }
     var showSearchBar by remember { mutableStateOf(false) }
     var localSearchQuery by remember { mutableStateOf("") }
+    val viewModel: com.example.ui.viewmodel.EmochiViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val searchResults by viewModel.searchResults.collectAsState()
     val starredMessages by viewModel.starredMessages.collectAsState()
     var showStarredSheet by remember { mutableStateOf(false) }
@@ -293,7 +296,6 @@ fun ChatScreen(
     val coroutineScope = rememberCoroutineScope()
     val clipboardManager = LocalClipboardManager.current
     val context = androidx.compose.ui.platform.LocalContext.current
-    val viewModel: com.example.ui.viewmodel.EmochiViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 
     // Milestone event collector
     LaunchedEffect(Unit) {
@@ -819,6 +821,7 @@ fun ChatScreen(
                             fontSize = 11.sp,
                             modifier = Modifier.padding(start = 16.dp, bottom = 6.dp)
                         )
+                    }
 
                     // Expandable Header Stats Banner (Personal Mode Only)
                     AnimatedVisibility(
@@ -977,8 +980,9 @@ fun ChatScreen(
                         }
                     }
                 }
-            },
-            bottomBar = {
+            }
+        },
+        bottomBar = {
                 // ── Bottom bar infinite animations ──────────────────────────
                 val inputInfinite = rememberInfiniteTransition(label = "inputBar")
                 val rpButtonGlow by inputInfinite.animateFloat(
@@ -1878,10 +1882,13 @@ fun ChatScreen(
                                                 .padding(horizontal = 16.dp, vertical = 14.dp)
                                         ) {
                                             Column {
+                                                val cursorSuffix = if (isThisStreaming && cursorAlpha > 0.5f) "▌" else ""
+                                                val formattedText = buildAnnotatedString {
+                                                    append(formatNarrativeText(displayText))
+                                                    if (cursorSuffix.isNotEmpty()) append(cursorSuffix)
+                                                }
                                                 Text(
-                                                    text = formatNarrativeText(displayText) + if (isThisStreaming) "▌".repeat(1).let { c ->
-                                                        if (cursorAlpha > 0.5f) "▌" else ""
-                                                    } else "",
+                                                    text = formattedText,
                                                     color = AppColors.TextWhite,
                                                     fontSize = 14.5.sp,
                                                     lineHeight = 22.sp
@@ -2834,8 +2841,6 @@ fun ChatScreen(
         )
     }
     } // End of else block for non-book mode
-    }
-    }
 }
 
 data class BookChoiceOption(val text: String, val rawLine: String)
@@ -4691,7 +4696,7 @@ fun BookReaderView(
                     itemsIndexed(messages, key = { _, msg -> msg.id }) { idx, msg ->
                         // Aşamalı fade-in
                         val visible = remember { androidx.compose.animation.core.MutableTransitionState(false).apply { targetState = true } }
-                        AnimatedVisibility(visibleState = visible,
+                        androidx.compose.animation.AnimatedVisibility(visibleState = visible,
                             enter = fadeIn(tween(350, delayMillis = minOf(idx * 40, 300))) +
                                     slideInVertically(tween(350, delayMillis = minOf(idx * 40, 300))) { it / 3 }
                         ) {
@@ -5104,6 +5109,7 @@ fun BookReaderView(
             }
         }
     }
+}
 }
 
 fun cleanCopyText(rawText: String): String {

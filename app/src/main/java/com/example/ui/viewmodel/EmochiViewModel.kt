@@ -478,8 +478,8 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
 
     fun createBotFromWizard(
         bot: BotEntity,
-        onComplete: () -> Unit,
-        triggers: List<com.example.data.local.SensitiveTriggerEntity> = emptyList()
+        triggers: List<com.example.data.local.SensitiveTriggerEntity> = emptyList(),
+        onComplete: () -> Unit = {}
     ) {
         viewModelScope.launch {
             try {
@@ -834,7 +834,14 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
     fun captureSystemPrompt(bot: com.example.data.local.BotEntity, msgs: List<com.example.data.local.MessageEntity>) {
         viewModelScope.launch {
             try {
-                val prompt = repository.buildSystemPrompt(bot, msgs)
+                val settings = userSettings.value ?: com.example.data.local.UserSettingsEntity()
+                val lastTimestamp = msgs.lastOrNull()?.timestamp ?: 0L
+                val prompt = repository.buildSystemPrompt(
+                    bot = bot,
+                    settings = settings,
+                    lastMessageTimestamp = lastTimestamp,
+                    totalMessageCount = msgs.size
+                )
                 _lastSystemPrompt.value = prompt
             } catch (_: Exception) {}
         }

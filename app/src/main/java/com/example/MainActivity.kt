@@ -111,9 +111,9 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
                 CreateBotWizardScreen(
                     onBack = { viewModel.openMenu() },
                     onFinish = { newBot ->
-                        viewModel.createBotFromWizard(newBot) {
+                        viewModel.createBotFromWizard(bot = newBot, onComplete = {
                             // Opened automatically
-                        }
+                        })
                     },
                     onGenerateOpening = { draft ->
                         viewModel.generateOpeningForWizard(draft)

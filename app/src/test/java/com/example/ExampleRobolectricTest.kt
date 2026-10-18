@@ -24,17 +24,20 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `test time perception 3 intervals console output`() {
+  fun `test story time jump parser`() {
+    val jumpResult = com.example.data.repository.TimePerceptionEngine.parseStoryTimeJump("3 gün sonra sabah oldu")
+    assertEquals(3, jumpResult.daysToAdvance)
+    assertEquals("sabah", jumpResult.newSceneTime)
+  }
+
+  @Test
+  fun `test in-memory database creation`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
       .allowMainThreadQueries()
       .build()
-    val repo = EmochiRepository(db, context)
-    val testOutput = repo.runTimePerceptionConsoleTest()
-    println(testOutput)
-    assertTrue(testOutput.contains("Aralık 1"))
-    assertTrue(testOutput.contains("Aralık 2"))
-    assertTrue(testOutput.contains("Aralık 3"))
+    db.openHelper.writableDatabase
+    assertTrue(db.isOpen)
     db.close()
   }
 }

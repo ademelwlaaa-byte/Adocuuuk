@@ -16,6 +16,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 
 import android.content.Intent
@@ -3504,6 +3506,7 @@ fun FallbackLogModal(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BotSettingsModal(
     bot: BotEntity,
@@ -6489,7 +6492,9 @@ fun CharacterEmotionControlModal(
                                 )
                                 .border(
                                     if (isSelected) 1.dp else 0.8.dp,
-                                    if (isSelected) Color.Transparent
+                                    if (isSelected) androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                        listOf(Color.Transparent, Color.Transparent)
+                                    )
                                     else androidx.compose.ui.graphics.Brush.linearGradient(
                                         listOf(Color(0x40A855F7), Color(0x20BE185D))
                                     ),

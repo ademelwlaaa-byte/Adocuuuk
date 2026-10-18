@@ -163,6 +163,9 @@ class EmochiRepository(
 
         const val THRESHOLD_VECTOR_ONLY = 0.75f
         const val THRESHOLD_QUERY_REWRITE = 0.50f
+        const val MAX_USER_INPUT_CHARS = 4000
+        private const val BUFFER_MAX_SIZE = 30
+        private const val BUFFER_EXPIRY_TURNS = 40
 
         @JvmStatic
         fun cleanEmotionTags(rawText: String): String {
@@ -540,8 +543,6 @@ class EmochiRepository(
     )
     private val candidateBuffer = java.util.concurrent.ConcurrentHashMap<String, MutableMap<String, CandidateBufferEntry>>()
     private val globalTurnCounter = java.util.concurrent.atomic.AtomicInteger(0)
-    private const val BUFFER_MAX_SIZE = 30
-    private const val BUFFER_EXPIRY_TURNS = 40
 
     fun getRegenerateCount(botId: String): Int = regenerateCountMap[botId] ?: 0
 
@@ -706,7 +707,7 @@ class EmochiRepository(
             needsSummarization = false,
             emotionState = calculatedBaseline,
             previousEmotionState = calculatedBaseline,
-            storyCalendarDate = "",
+            storyCalendarDate = "2026-08-29",
             storyDayCounter = 1L,
             currentAge = birthAge,
             lastMessageTimestamp = System.currentTimeMillis(),

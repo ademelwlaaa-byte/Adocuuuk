@@ -113,7 +113,7 @@ object ImageStorageManager {
             // Already a data URI — return as-is
             if (uriOrPath.startsWith("data:image/")) return@withContext uriOrPath
 
-            val bitmap: Bitmap? = when {
+            val bitmap: Bitmap = when {
                 uriOrPath.startsWith("content://") || uriOrPath.startsWith("file://") -> {
                     val uri = Uri.parse(uriOrPath)
                     context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
@@ -147,14 +147,18 @@ object ImageStorageManager {
     /**
      * Decodes a Base64 data URI back to a Bitmap.
      */
-    fun base64DataUriToBitmap(dataUri: String): Bitmap? = try {
-        if (!dataUri.startsWith("data:image/")) return null
-        val base64Part = dataUri.substringAfter(",")
-        val bytes = Base64.decode(base64Part, Base64.NO_WRAP)
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-    } catch (e: Exception) {
-        Log.e(TAG, "base64DataUriToBitmap failed", e)
-        null
+    fun base64DataUriToBitmap(dataUri: String): Bitmap? {
+        return try {
+            if (!dataUri.startsWith("data:image/")) null
+            else {
+                val base64Part = dataUri.substringAfter(",")
+                val bytes = Base64.decode(base64Part, Base64.NO_WRAP)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "base64DataUriToBitmap failed", e)
+            null
+        }
     }
 
     /**

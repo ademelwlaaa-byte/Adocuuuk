@@ -121,8 +121,13 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material.icons.filled.Close
 import coil.compose.AsyncImage
 import com.example.R
@@ -4561,14 +4566,14 @@ fun ChapterSelectionModal(
                             .graphicsLayer { scaleX = itemScale.value; scaleY = itemScale.value }
                             .clip(RoundedCornerShape(14.dp))
                             .background(when {
-                                isComingSoon -> Color(0xFF080614)
+                                isComingSoon -> Brush.linearGradient(listOf(Color(0xFF080614), Color(0xFF080614)))
                                 isCurrent -> Brush.linearGradient(listOf(Color(0xFF1A1040), Color(0xFF120D2A)))
                                 isCompleted -> Brush.linearGradient(listOf(Color(0xFF0A1A14), Color(0xFF080F10)))
                                 isUnlocked -> Brush.linearGradient(listOf(Color(0xFF120D24), Color(0xFF0A0818)))
                                 else -> Brush.linearGradient(listOf(Color(0xFF080612), Color(0xFF080612)))
                             })
                             .border(1.dp, when {
-                                isComingSoon -> Color(0xFF120D24)
+                                isComingSoon -> Brush.linearGradient(listOf(Color(0xFF120D24), Color(0xFF120D24)))
                                 isCurrent -> Brush.linearGradient(listOf(Color(0xFF7C3AED), Color(0xFF4F46E5)))
                                 isCompleted -> Brush.linearGradient(listOf(Color(0xFF059669), Color(0xFF047857)))
                                 isUnlocked -> Brush.linearGradient(listOf(Color(0xFF3D2D60), Color(0xFF2D1F50)))
@@ -4591,7 +4596,7 @@ fun ChapterSelectionModal(
                                 // Sol ikon
                                 Box(modifier = Modifier.size(40.dp).clip(CircleShape)
                                     .background(when {
-                                        isComingSoon -> Color(0xFF110E24)
+                                        isComingSoon -> Brush.radialGradient(listOf(Color(0xFF110E24), Color(0xFF110E24)))
                                         isCompleted -> Brush.radialGradient(listOf(Color(0xFF059669), Color(0xFF047857)))
                                         isCurrent -> Brush.radialGradient(listOf(Color(0xFF7C3AED), Color(0xFF4C1D95)))
                                         isUnlocked -> Brush.radialGradient(listOf(Color(0xFF3730A3), Color(0xFF1E1B4B)))
