@@ -38,6 +38,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Handle proactive notification deep link
+        if (intent?.action == "com.example.OPEN_CHAT") {
+            val botId = intent.getStringExtra("botId")
+            if (!botId.isNullOrBlank()) {
+                viewModel.openBot(botId)
+            }
+        }
         setContent {
             MyApplicationTheme {
                 Surface(
@@ -63,6 +70,8 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
     val isSending by viewModel.isSending.collectAsStateWithLifecycle()
     val isSpeaking by viewModel.isSpeaking.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    val streamingMsgId by viewModel.streamingMsgId.collectAsStateWithLifecycle()
+    val streamingText by viewModel.streamingText.collectAsStateWithLifecycle()
 
     AnimatedContent(
         targetState = uiState,
@@ -108,6 +117,9 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
                     },
                     onGenerateOpening = { draft ->
                         viewModel.generateOpeningForWizard(draft)
+                    },
+                    onAnalyzeBaseline = { draft ->
+                        viewModel.analyzeBaselineForWizard(draft)
                     }
                 )
             }
@@ -152,8 +164,11 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
                         onEnsureOpeningMessage = { viewModel.ensureOpeningMessageForActiveBot() },
                         onClearError = { viewModel.clearError() },
                         onRetryMessage = { msgId -> viewModel.retryMessage(msgId) },
+                        onRetryFromBanner = { viewModel.retryWithSoftenedPrompt(currentBot.id) },
                         onRewindToMessage = { msgId -> viewModel.rewindToMessage(currentBot.id, msgId) },
-                        onCloneBot = { viewModel.cloneBot(currentBot.id) }
+                        onCloneBot = { viewModel.cloneBot(currentBot.id) },
+                        streamingMsgId = streamingMsgId,
+                        streamingText = streamingText
                     )
                 }
             }

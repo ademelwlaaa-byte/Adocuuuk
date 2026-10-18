@@ -16,6 +16,17 @@ class EmochiApplication : Application(), ImageLoaderFactory {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+        try {
+            com.example.work.BackgroundMemoryMergeWorker.schedule(this)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
+            com.example.work.ProactiveMessageWorker.schedule(this)
+            com.example.work.ProactiveMessageWorker.createNotificationChannel(this)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun newImageLoader(): ImageLoader {

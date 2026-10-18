@@ -18,8 +18,61 @@ import java.util.Locale
  * - Pure Kotlin natural emotional decay (anger/resentment cooling over time, longing increase)
  * - Psychological consistency auditing (detects & corrects emotional contradictions in code)
  * - Anti-spam affection gain damping, recovery locks, and 500-turn synthetic balancing simulation
+ * - Canonical field alias table for short/long JSON field name compatibility
+ * - Passive per-message micro-decay for anger/resentment (realistic slow cooling)
  */
 object EmotionEngine {
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // KANONIK ALAN ADI EŞLEMESİ
+    // Hem kısa (yeni şema) hem uzun (eski/geriye dönük) adlar desteklenir.
+    // Çakışma olursa uzun ad (mevcut değer) korunur; kısa yalnızca eksik alanı doldurur.
+    // ─────────────────────────────────────────────────────────────────────────
+    val FIELD_ALIASES: Map<String, String> = mapOf(
+        // relationship_axes kısa adları
+        "aff"      to "affectionScore",
+        "rsp"      to "respectScore",
+        "cmf"      to "comfortScore",
+        "res"      to "resentmentScore",
+        // üst seviye obje kısa adları
+        "pe"       to "primary_emotions",
+        "ra"       to "relationship_axes",
+        // skaler alanlar
+        "pcs"      to "physicalComfortScore",
+        "obs"      to "obsessionScore",
+        "dom"      to "dominant_emotion",
+        "sup"      to "suppressed_emotion",
+        "supp_emo" to "suppressed_emotion",
+        // delta alt alanları
+        "val"      to "value",
+        "rsn"      to "reason",
+        "ax"       to "axis",
+        "stg"      to "setting",
+        "md"       to "mode",
+        "tns"      to "tension",
+        // V3.1 yeni alanlar — bunlar kendi adlarıyla okunur, alias değil:
+        // "why"  → değişimin kısa gerekçesi (why veya delta.reason ile aynı slot)
+        // "trig" → anlamsal tetik kimlikleri listesi
+        // "reapp"→ reappraisal aktif bayrağı
+        "why"      to "why",
+        "trig"     to "trig",
+        "reapp"    to "reapp"
+    )
+
+    /**
+     * JSONObject içindeki kısa takma adları kanonik uzun ada çevirir (yerinde).
+     * Uzun ad zaten varsa kısa adı yok sayar (uzun ad öncelikli).
+     */
+    fun resolveAliases(json: JSONObject): JSONObject {
+        for ((short, canonical) in FIELD_ALIASES) {
+            if (short == canonical) continue
+            if (json.has(short) && !json.has(canonical)) {
+                json.put(canonical, json.get(short))
+                json.remove(short)
+            }
+        }
+        return json
+    }
 
     data class EmotionalRegulationResult(
         val rawDelta: Int,
@@ -79,94 +132,206 @@ object EmotionEngine {
     }
 
     /**
-     * Applies natural time-based emotional decay and cooling in pure Kotlin.
-     * Anger, resentment, and emotional residue cool down over hours/days.
-     * Long absences increase longing/anticipation.
+     * Applies natural story-time-based emotional decay and longing boost in pure Kotlin.
+     * Called ONLY when a story time skip (daysToSkip > 0) occurs — never on real clock time.
+     * Sönümlenme hızı regulationCapacity'ye (50 = varsayılan) göre ölçeklenir:
+     *   capacity ≥ 60 → %20 daha hızlı sönüm (olgun, duygusal düzenlemesi iyi karakter)
+     *   capacity ≤ 30 → %15 daha yavaş sönüm (dürtüsel, duygusal yükü kolay bırakmayan karakter)
+     * Sönüm sırası: önce decay uygulanır, sonra model delta'sı → çağıran bu sırayı sağlamalı.
+     * @param storyDaysSkipped Hikâye içinde atlanan gün sayısı (gerçek saatle ilgisi yok)
+     * @param regulationCapacity Karakterin duygusal düzenleme kapasitesi (0-100, varsayılan 50)
+     * @return Güncellenmiş EmotionState ve tek satırlık prompt notu (boşsa enjekte edilmez)
      */
+    data class DecayResult(val state: EmotionState, val promptNote: String)
+
     fun applyNaturalEmotionalDecay(
         currentState: EmotionState,
-        elapsedMs: Long
-    ): EmotionState {
-        if (elapsedMs < 10 * 60 * 1000L) return currentState // < 10 min, no decay
+        storyDaysSkipped: Int,
+        regulationCapacity: Int = 50
+    ): EmotionState = applyNaturalEmotionalDecayWithNote(currentState, storyDaysSkipped, regulationCapacity).state
 
-        val elapsedHours = elapsedMs / (1000L * 3600)
-        val elapsedDays = elapsedHours / 24
+    fun applyNaturalEmotionalDecayWithNote(
+        currentState: EmotionState,
+        storyDaysSkipped: Int,
+        regulationCapacity: Int = 50
+    ): DecayResult {
+        if (storyDaysSkipped <= 0) return DecayResult(currentState, "")
+
+        // Düzenleme kapasitesi sönüm hızını etkiler
+        val capMult = when {
+            regulationCapacity >= 60 -> 1.20  // hızlı sönüm
+            regulationCapacity <= 30 -> 0.85  // yavaş sönüm
+            else                     -> 1.00
+        }
 
         var anger = currentState.primaryEmotions.anger
         var resentment = currentState.relationshipAxes.resentmentScore
         var residue = currentState.emotionalResidue
         var anticipation = currentState.primaryEmotions.anticipation
 
-        // 1. Anger cools down quickly (hours)
+        val angerBefore = anger
+        val resentmentBefore = resentment
+
+        // 1. Öfke sönümü (hikâye günü bazlı)
         if (anger > 0) {
-            val angerDecay = when {
-                elapsedHours >= 72 -> (anger * 0.85).toInt()
-                elapsedHours >= 24 -> (anger * 0.60).toInt()
-                elapsedHours >= 6 -> (anger * 0.35).toInt()
-                else -> (anger * 0.15).toInt()
+            val baseRate = when {
+                storyDaysSkipped >= 7  -> 0.85
+                storyDaysSkipped >= 3  -> 0.60
+                storyDaysSkipped >= 1  -> 0.35
+                else                   -> 0.15
             }
+            val angerDecay = (anger * baseRate * capMult).toInt()
             anger = (anger - angerDecay).coerceAtLeast(0)
         }
 
-        // 2. Resentment cools down over days
-        if (resentment > 0 && elapsedDays >= 1) {
-            val resDecay = when {
-                elapsedDays >= 14 -> (resentment * 0.70).toInt()
-                elapsedDays >= 7 -> (resentment * 0.45).toInt()
-                elapsedDays >= 3 -> (resentment * 0.25).toInt()
-                else -> (resentment * 0.10).toInt()
+        // 2. Kırgınlık sönümü (öfkeden daha yavaş, daha uzun süreli)
+        if (resentment > 0) {
+            val baseRate = when {
+                storyDaysSkipped >= 14 -> 0.70
+                storyDaysSkipped >= 7  -> 0.45
+                storyDaysSkipped >= 3  -> 0.25
+                else                   -> 0.10
             }
+            val resDecay = (resentment * baseRate * capMult).toInt()
             resentment = (resentment - resDecay).coerceAtLeast(0)
         }
 
-        // 3. Emotional residue decays over time
-        if (residue > 0 && elapsedHours >= 4) {
-            val residueDecay = (elapsedHours * 2).toInt()
+        // 3. Duygusal artık (residue) sönümü
+        if (residue > 0) {
+            val residueDecay = (storyDaysSkipped * 48).coerceAtMost(residue)
             residue = (residue - residueDecay).coerceAtLeast(0)
         }
 
-        // 4. Long absence increases longing/anticipation if affection > 40
-        if (currentState.affection >= 40 && elapsedDays >= 3) {
-            val longingBoost = minOf(25, (elapsedDays * 3).toInt())
-            anticipation = (anticipation + longingBoost).coerceAtMost(90)
+        // 4. Özlem artışı: yakınlık ≥ 40 ve ≥ 3 hikâye günü geçmişse
+        var longingAdded = 0
+        if (currentState.affection >= 40 && storyDaysSkipped >= 3) {
+            longingAdded = minOf(25, storyDaysSkipped * 3)
+            anticipation = (anticipation + longingAdded).coerceAtMost(90)
         }
 
-        val updatedPrim = currentState.primaryEmotions.copy(
-            anger = anger,
-            anticipation = anticipation
-        )
-        val updatedAxes = currentState.relationshipAxes.copy(
-            resentmentScore = resentment
+        val updatedState = currentState.copy(
+            primaryEmotions = currentState.primaryEmotions.copy(
+                anger = anger,
+                anticipation = anticipation
+            ),
+            relationshipAxes = currentState.relationshipAxes.copy(
+                resentmentScore = resentment
+            ),
+            emotionalResidue = residue
         )
 
+        // Prompt notu: yalnızca gerçek değişim varsa eklenir
+        val parts = mutableListOf<String>()
+        val angerDrop = angerBefore - anger
+        val resDrop = resentmentBefore - resentment
+        if (angerDrop >= 5) parts.add("öfke azaldı (${angerBefore}→${anger})")
+        if (resDrop >= 5) parts.add("kırgınlık yumuşadı (${resentmentBefore}→${resentment})")
+        if (longingAdded >= 5) parts.add("özlem arttı (+$longingAdded)")
+
+        val note = if (parts.isNotEmpty()) {
+            "Aradan $storyDaysSkipped gün geçti: ${parts.joinToString(", ")}."
+        } else ""
+
+        return DecayResult(updatedState, note)
+    }
+
+    /**
+     * Pasif mikro-sönüm: hikâye atlaması olmayan sıradan mesajlarda çok yavaş
+     * öfke/kırgınlık soğuması. Gerçekçi psikoloji: büyük kızgınlıklar günler içinde
+     * kendiliğinden biraz hafifler, aniden kaybolmaz.
+     * Kural: her 10 mesajda öfke ve kırgınlık 1 puan azalır (eşik: >20).
+     * Düzenleme kapasitesi ≥ 60 ise her 8 mesajda bir uygulanır.
+     * @param messageIndex O an kaçıncı mesaj olduğu (toplam sayaç)
+     */
+    fun applyPassiveDecayPerMessage(
+        currentState: EmotionState,
+        messageIndex: Int,
+        regulationCapacity: Int = 50
+    ): EmotionState {
+        val interval = if (regulationCapacity >= 60) 8 else 10
+        if (messageIndex % interval != 0) return currentState
+
+        var anger = currentState.primaryEmotions.anger
+        var resentment = currentState.relationshipAxes.resentmentScore
+
+        if (anger > 20) anger = (anger - 1).coerceAtLeast(0)
+        if (resentment > 20) resentment = (resentment - 1).coerceAtLeast(0)
+
+        if (anger == currentState.primaryEmotions.anger &&
+            resentment == currentState.relationshipAxes.resentmentScore) return currentState
+
         return currentState.copy(
-            primaryEmotions = updatedPrim,
-            relationshipAxes = updatedAxes,
-            emotionalResidue = residue
+            primaryEmotions = currentState.primaryEmotions.copy(anger = anger),
+            relationshipAxes = currentState.relationshipAxes.copy(resentmentScore = resentment)
         )
     }
 
     /**
      * Audits and enforces psychological consistency in Kotlin.
      * Prevents absurd contradictions (e.g. anger=80 but dominantEmotion="neşeli").
+     * Returns the corrected state AND a consistency note (empty if no contradiction found).
+     * The note is injected into the NEXT message's prompt as a single line so the LLM self-corrects.
      */
-    fun enforcePsychologicalConsistency(state: EmotionState): EmotionState {
+    data class ConsistencyResult(val state: EmotionState, val contradictionNote: String)
+
+    fun enforcePsychologicalConsistency(state: EmotionState): EmotionState =
+        enforcePsychologicalConsistencyWithNote(state).state
+
+    fun enforcePsychologicalConsistencyWithNote(state: EmotionState): ConsistencyResult {
         var dom = state.dominantEmotion.lowercase(Locale("tr", "TR")).trim()
         val anger = state.primaryEmotions.anger
         val resentment = state.relationshipAxes.resentmentScore
         val joy = state.primaryEmotions.joy
+        val sadness = state.primaryEmotions.sadness
+        val fear = state.primaryEmotions.fear
 
+        var note = ""
+        var corrected = false
+
+        // Kural 1: Yüksek öfke/kırgınlık ile neşeli baskın duygu çelişkisi
         if (anger >= 65 || resentment >= 65) {
-            if (dom.contains("neşeli") || dom.contains("mutlu") || dom.contains("coşkulu")) {
-                dom = "gergin ve mesafeli"
-            }
-        } else if (joy >= 70 && anger < 20) {
-            if (dom.contains("öfkeli") || dom.contains("kızgın")) {
-                dom = "keyifli ve rahat"
+            if (dom.contains("neşeli") || dom.contains("mutlu") || dom.contains("coşkulu") ||
+                dom.contains("keyifli") || dom.contains("sevinçli")) {
+                val oldDom = dom
+                dom = if (anger >= resentment) "gergin ve öfkeli" else "kırgın ve mesafeli"
+                note = "Önceki state çelişkiliydi: öfke/kırgınlık yüksek (anger=$anger, resentment=$resentment) ama baskın duygu \"$oldDom\" idi. Tutarlı bir state üret."
+                corrected = true
             }
         }
 
-        return state.copy(dominantEmotion = dom)
+        // Kural 2: Yüksek neşe + düşük öfke ile kızgın baskın duygu çelişkisi
+        if (!corrected && joy >= 70 && anger < 20) {
+            if (dom.contains("öfkeli") || dom.contains("kızgın") || dom.contains("sinirli")) {
+                val oldDom = dom
+                dom = "keyifli ve rahat"
+                note = "Önceki state çelişkiliydi: neşe yüksek (joy=$joy) ama baskın duygu \"$oldDom\" idi. Tutarlı bir state üret."
+                corrected = true
+            }
+        }
+
+        // Kural 3: Çok düşük affection ile "tam güven/derin aşk" baskın duygu çelişkisi
+        if (!corrected && state.affection < 25) {
+            if (dom.contains("derin aşk") || dom.contains("tam güven") || dom.contains("aşık")) {
+                val oldDom = dom
+                dom = "nötr ve temkinli"
+                note = "Önceki state çelişkiliydi: affection düşük (${state.affection}) ama baskın duygu \"$oldDom\" idi. Tutarlı bir state üret."
+                corrected = true
+            }
+        }
+
+        // Kural 4: Yüksek korku/üzüntü ile neşeli çelişkisi
+        if (!corrected && (fear >= 70 || sadness >= 70)) {
+            if (dom.contains("neşeli") || dom.contains("mutlu") || dom.contains("coşkulu")) {
+                val oldDom = dom
+                dom = if (fear >= sadness) "kaygılı ve tedirgin" else "üzgün ve içe kapanık"
+                note = "Önceki state çelişkiliydi: korku/üzüntü yüksek (fear=$fear, sadness=$sadness) ama baskın duygu \"$oldDom\" idi. Tutarlı bir state üret."
+            }
+        }
+
+        return ConsistencyResult(
+            state = state.copy(dominantEmotion = dom),
+            contradictionNote = note
+        )
     }
 
     /**
@@ -181,18 +346,18 @@ object EmotionEngine {
 
         return try {
             val jsonMatch = Regex("""(?is)\{.*\}""").find(rawStateBlock)?.value ?: rawStateBlock
-            val json = JSONObject(jsonMatch)
+            val json = resolveAliases(JSONObject(jsonMatch))
 
-            // Extract delta information
-            val deltaObj = json.optJSONObject("delta")
-            val deltaAxis = deltaObj?.optString("axis", "")?.ifBlank {
-                deltaObj.optString("ax", "")
-            }?.ifBlank { json.optString("axis", "affectionScore") } ?: "affectionScore"
+            // Delta: tüm kısa/uzun formlar alias tablosu ile çözüldükten sonra okunur
+            val deltaObj = json.optJSONObject("delta")?.let { resolveAliases(it) }
+            val deltaAxis = deltaObj?.optString("axis", "")?.ifBlank { "affectionScore" }
+                ?: "affectionScore"
+            val deltaVal = deltaObj?.optInt("value", 0) ?: json.optInt("delta", 0)
+            // "why" alanı delta.reason ile aynı slota düşer
+            val deltaReason = deltaObj?.optString("reason", "")
+                ?: json.optString("why", "")
 
-            val deltaVal = deltaObj?.optInt("value", 0) ?: deltaObj?.optInt("val", 0) ?: json.optInt("delta", 0)
-            val deltaReason = deltaObj?.optString("reason", "") ?: deltaObj?.optString("rsn", "") ?: ""
-
-            // Primary emotions: merge if present, else keep previous
+            // Primary emotions: varsa merge, yoksa koru
             val primObj = json.optJSONObject("primary_emotions")
             val updatedPrimary = if (primObj != null) {
                 PrimaryEmotions.fromJsonObject(primObj)
@@ -200,24 +365,27 @@ object EmotionEngine {
                 previousState.primaryEmotions
             }
 
-            // Relationship axes: merge if present, else apply delta to previous
-            val relObj = json.optJSONObject("relationship_axes")
+            // Relationship axes: varsa merge, yoksa delta uygula
+            val relObj = json.optJSONObject("relationship_axes")?.let { resolveAliases(it) }
             val updatedAxes = if (relObj != null) {
                 RelationshipAxes.fromJsonObject(relObj)
             } else {
-                val currentAff = previousState.affection
-                val newAff = if (deltaAxis == "affectionScore") (currentAff + deltaVal).coerceIn(0, 100) else currentAff
+                val newAff = if (deltaAxis == "affectionScore")
+                    (previousState.affection + deltaVal).coerceIn(0, 100)
+                else previousState.affection
                 previousState.relationshipAxes.copy(affectionScore = newAff)
             }
 
             val domEmotion = json.optString("dominant_emotion", "").ifBlank {
                 json.optString("mood", previousState.dominantEmotion)
             }
+            val suppEmotion = json.optString("suppressed_emotion", previousState.suppressedEmotion)
 
             val state = previousState.copy(
                 primaryEmotions = updatedPrimary,
                 relationshipAxes = updatedAxes,
                 dominantEmotion = domEmotion,
+                suppressedEmotion = suppEmotion,
                 deltaAxis = deltaAxis,
                 deltaValue = deltaVal,
                 deltaReason = deltaReason
@@ -225,8 +393,9 @@ object EmotionEngine {
 
             enforcePsychologicalConsistency(state)
         } catch (_: Exception) {
-            // Regex salvage fallback for delta
-            val valMatch = Regex("""(?:value|val|delta)["':\s]+([+-]?\d+)""").find(rawStateBlock)?.groupValues?.get(1)?.toIntOrNull()
+            // Regex kurtarma — delta değeri çıkarılabiliyorsa kısmi uygula, yoksa son geçerli state
+            val valMatch = Regex("""(?:value|val|delta|aff)["':\s]+([+-]?\d+)""")
+                .find(rawStateBlock)?.groupValues?.get(1)?.toIntOrNull()
             if (valMatch != null) {
                 val newAff = (previousState.affection + valMatch).coerceIn(0, 100)
                 previousState.copy(
@@ -287,8 +456,7 @@ object EmotionEngine {
 
         // 3. 14-Day Natural Decay Test (Turns 301 - 500)
         sb.appendLine("\n[PHASE 3: 14-Day Absence Emotional Decay]")
-        val twoWeeksMs = 14L * 24 * 3600 * 1000L
-        val decayed = applyNaturalEmotionalDecay(state, twoWeeksMs)
+        val decayed = applyNaturalEmotionalDecay(state, storyDaysSkipped = 14)
         sb.appendLine("-> Initial Anger: ${state.primaryEmotions.anger} -> Post-Decay Anger: ${decayed.primaryEmotions.anger}")
         sb.appendLine("-> Initial Resentment: ${state.relationshipAxes.resentmentScore} -> Post-Decay Resentment: ${decayed.relationshipAxes.resentmentScore}")
         sb.appendLine("-> Post-Decay Anticipation/Longing: ${decayed.primaryEmotions.anticipation}")

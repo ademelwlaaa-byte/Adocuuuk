@@ -33,7 +33,7 @@ object MemoryToolRegistry {
     val CENTRAL_TOOLS: List<MemoryToolDefinition> = listOf(
         MemoryToolDefinition(
             name = "save_memory",
-            description = "Konuşma sırasında önemli, kalıcı bir bilgi veya olay fark ettiğinde bunu hafızaya kaydeder.",
+            description = "Konuşma sırasında önemli, kalıcı bir bilgi veya olay fark ettiğinde bunu hafızaya kaydeder. Geçici durumlar (anlık ruh hali, o anki hareket) kaydedilmez.",
             properties = mapOf(
                 "content" to MemoryToolProperty(
                     type = "string",
@@ -41,12 +41,16 @@ object MemoryToolRegistry {
                 ),
                 "category" to MemoryToolProperty(
                     type = "string",
-                    description = "Bilgi türü: fact (sabit bilgi) veya event (yaşanan olay)",
+                    description = "Bilgi türü: fact (sabit bilgi, isim/yaş/tercih/ilişki) veya event (yaşanan önemli olay/söz)",
                     enum = listOf("fact", "event")
                 ),
                 "importance" to MemoryToolProperty(
                     type = "string",
-                    description = "Önem derecesi 1-10"
+                    description = "Önem derecesi 1-10. 4 ve altı: önemsiz (kaydedilmez). 5+: orta. 8+: çok önemli."
+                ),
+                "subject" to MemoryToolProperty(
+                    type = "string",
+                    description = "Bilginin kimin hakkında olduğu: 'kullanıcı', 'karakter', veya yan karakterin adı (ör. 'Kerem'). Belirsizse boş bırak."
                 )
             ),
             required = listOf("content", "category")

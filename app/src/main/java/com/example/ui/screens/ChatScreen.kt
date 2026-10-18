@@ -1,7 +1,8 @@
 package com.example.ui.screens
 
 import com.example.ui.theme.AppColors
-
+import com.example.ui.theme.EmochiGradients
+import com.example.ui.theme.EmochiBackground
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Offset
@@ -13,8 +14,14 @@ import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.runtime.collectAsState
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -25,12 +32,15 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -53,6 +63,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -250,8 +261,11 @@ fun ChatScreen(
     onEnsureOpeningMessage: () -> Unit = {},
     onClearError: () -> Unit = {},
     onRetryMessage: ((String) -> Unit)? = null,
+    onRetryFromBanner: (() -> Unit)? = null,
     onRewindToMessage: ((String) -> Unit)? = null,
-    onCloneBot: (() -> Unit)? = null
+    onCloneBot: (() -> Unit)? = null,
+    streamingMsgId: String? = null,
+    streamingText: String? = null
 ) {
     var inputText by remember { mutableStateOf("") }
     var showBotSettings by remember { mutableStateOf(false) }
@@ -264,12 +278,31 @@ fun ChatScreen(
     var expandedUserMenuMessageId by remember { mutableStateOf<String?>(null) }
     var rewindTargetMessageId by remember { mutableStateOf<String?>(null) }
     var isStatsExpanded by remember { mutableStateOf(false) }
+    var showSearchBar by remember { mutableStateOf(false) }
+    var localSearchQuery by remember { mutableStateOf("") }
+    val searchResults by viewModel.searchResults.collectAsState()
+    val starredMessages by viewModel.starredMessages.collectAsState()
+    var showStarredSheet by remember { mutableStateOf(false) }
+    var activeMilestone by remember { mutableStateOf<com.example.data.local.MilestoneEntity?>(null) }
+    // Reaction picker state
+    var reactionPickerMessageId by remember { mutableStateOf<String?>(null) }
+    val reactionEmojis = listOf("❤️", "😂", "😮", "😢", "👍", "🔥")
+    val milestoneEvent = viewModel.milestoneEvent
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val clipboardManager = LocalClipboardManager.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val viewModel: com.example.ui.viewmodel.EmochiViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+
+    // Milestone event collector
+    LaunchedEffect(Unit) {
+        milestoneEvent.collect { milestone ->
+            activeMilestone = milestone
+            kotlinx.coroutines.delay(4000)
+            activeMilestone = null
+        }
+    }
 
     // Stop speaking immediately when exiting chat
     DisposableEffect(Unit) {
@@ -431,7 +464,14 @@ fun ChatScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(EmochiSurface.copy(alpha = 0.88f))
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    EmochiSurface.copy(alpha = 0.97f),
+                                    EmochiSurface.copy(alpha = 0.85f)
+                                )
+                            )
+                        )
                         .statusBarsPadding()
                         .animateContentSize(animationSpec = tween(220, easing = FastOutSlowInEasing))
                 ) {
@@ -440,21 +480,41 @@ fun ChatScreen(
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = if (isImeVisible) 4.dp else 6.dp)
                     ) {
-                        // Back button (Left)
+                        // Back button (Left) — premium glass
+                        val backInteraction = remember { MutableInteractionSource() }
+                        val backPressed by backInteraction.collectIsPressedAsState()
+                        val backScale by animateFloatAsState(
+                            targetValue = if (backPressed) 0.87f else 1f,
+                            animationSpec = tween(80),
+                            label = "backScale"
+                        )
                         Box(
                             modifier = Modifier
                                 .size(if (isImeVisible) 34.dp else 38.dp)
                                 .align(Alignment.CenterStart)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0x90130F26))
-                                .border(1.dp, Color(0x508B5CF6), RoundedCornerShape(12.dp))
-                                .clickable { onBack() },
+                                .graphicsLayer { scaleX = backScale; scaleY = backScale }
+                                .clip(RoundedCornerShape(13.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFF1C1040), Color(0xFF0F0828))
+                                    )
+                                )
+                                .border(
+                                    BorderStroke(
+                                        1.2.dp,
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF7C3AED), Color(0xFF4C1D95), Color(0xFF6D28D9))
+                                        )
+                                    ),
+                                    RoundedCornerShape(13.dp)
+                                )
+                                .clickable(interactionSource = backInteraction, indication = null) { onBack() },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ArrowBack,
                                 contentDescription = "Geri",
-                                tint = Color.White,
+                                tint = Color(0xFFCDA8FF),
                                 modifier = Modifier.size(if (isImeVisible) 17.dp else 19.dp)
                             )
                         }
@@ -518,31 +578,36 @@ fun ChatScreen(
                                                 modifier = Modifier.fillMaxSize().clip(CircleShape)
                                             )
                                         } else if (bot.avatarUrl.isNotBlank()) {
-                                            coil.compose.AsyncImage(
-                                                model = bot.avatarUrl,
+                                            com.example.ui.components.BotAvatarImage(
+                                                avatarUrl = bot.avatarUrl,
                                                 contentDescription = displayName,
                                                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                                fallback = { OrbView(hue = hue, size = 38.dp) }
                                             )
                                         } else {
                                             OrbView(hue = hue, size = 38.dp)
                                         }
                                     }
 
+                                    // Online badge — pulsing glow ring + solid green dot
                                     Box(
                                         modifier = Modifier
-                                            .size(12.dp)
+                                            .size(16.dp)
                                             .clip(CircleShape)
-                                            .background(AppColors.Emerald.copy(alpha = pulseGlowAlpha))
-                                            .padding(1.dp),
+                                            .background(AppColors.Emerald.copy(alpha = pulseGlowAlpha * 0.55f)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Box(
                                             modifier = Modifier
-                                                .size(9.dp)
+                                                .size(10.dp)
                                                 .clip(CircleShape)
-                                                .background(AppColors.Emerald)
-                                                .border(1.dp, AppColors.Hex_070512, CircleShape)
+                                                .background(
+                                                    Brush.radialGradient(
+                                                        colors = listOf(AppColors.LightGreen, AppColors.Emerald)
+                                                    )
+                                                )
+                                                .border(1.5.dp, EmochiSurface, CircleShape)
                                         )
                                     }
                                 }
@@ -577,6 +642,7 @@ fun ChatScreen(
                         // Right Action Buttons (Wallpaper + Settings)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                             modifier = Modifier.align(Alignment.CenterEnd)
                         ) {
                             AnimatedVisibility(
@@ -584,97 +650,281 @@ fun ChatScreen(
                                 enter = fadeIn(tween(200)),
                                 exit = fadeOut(tween(200))
                             ) {
+                                val wpInteraction = remember { MutableInteractionSource() }
+                                val wpPressed by wpInteraction.collectIsPressedAsState()
+                                val wpScale by animateFloatAsState(
+                                    targetValue = if (wpPressed) 0.88f else 1f,
+                                    animationSpec = tween(80),
+                                    label = "wpScale"
+                                )
                                 Box(
                                     modifier = Modifier
                                         .size(38.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(Color(0x90130F26))
-                                        .border(1.dp, Color(0x508B5CF6), RoundedCornerShape(12.dp))
-                                        .clickable { showBackgroundPicker = true }
+                                        .graphicsLayer { scaleX = wpScale; scaleY = wpScale }
+                                        .clip(RoundedCornerShape(13.dp))
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(Color(0xFF1C1040), Color(0xFF0F0828))
+                                            )
+                                        )
+                                        .border(
+                                            BorderStroke(
+                                                1.2.dp,
+                                                Brush.linearGradient(
+                                                    listOf(Color(0xFF9333EA), Color(0xFF4C1D95), Color(0xFF7C3AED))
+                                                )
+                                            ),
+                                            RoundedCornerShape(13.dp)
+                                        )
+                                        .clickable(interactionSource = wpInteraction, indication = null) { showBackgroundPicker = true }
                                         .testTag("wallpaper_picker_button"),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Wallpaper,
                                         contentDescription = "Arka Plan",
-                                        tint = AppColors.PrimaryViolet,
+                                        tint = Color(0xFFCDA8FF),
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
                             }
 
-                            if (!isImeVisible) {
-                                Spacer(modifier = Modifier.width(6.dp))
+                            // Search button
+                            AnimatedVisibility(visible = !isImeVisible, enter = fadeIn(tween(200)), exit = fadeOut(tween(200))) {
+                                val srInteraction = remember { MutableInteractionSource() }
+                                val srPressed by srInteraction.collectIsPressedAsState()
+                                val srScale by animateFloatAsState(if (srPressed) 0.88f else 1f, tween(80), label = "srScale")
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .graphicsLayer { scaleX = srScale; scaleY = srScale }
+                                        .clip(RoundedCornerShape(13.dp))
+                                        .background(if (showSearchBar) Brush.linearGradient(listOf(Color(0xFF3B0F70), Color(0xFF1A0D38))) else Brush.linearGradient(listOf(Color(0xFF1C1040), Color(0xFF0F0828))))
+                                        .border(BorderStroke(1.2.dp, Brush.linearGradient(if (showSearchBar) listOf(Color(0xFFA855F7), Color(0xFF7C3AED)) else listOf(Color(0xFF6D28D9), Color(0xFF4C1D95), Color(0xFF7C3AED)))), RoundedCornerShape(13.dp))
+                                        .clickable(interactionSource = srInteraction, indication = null) {
+                                            showSearchBar = !showSearchBar
+                                            if (!showSearchBar) { localSearchQuery = ""; viewModel.clearSearch() }
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Search, "Ara", tint = if (showSearchBar) Color(0xFFA855F7) else Color(0xFFCDA8FF), modifier = Modifier.size(18.dp))
+                                }
                             }
 
+                            val stInteraction = remember { MutableInteractionSource() }
+                            val stPressed by stInteraction.collectIsPressedAsState()
+                            val stScale by animateFloatAsState(
+                                targetValue = if (stPressed) 0.88f else 1f,
+                                animationSpec = tween(80),
+                                label = "stScale"
+                            )
                             Box(
                                 modifier = Modifier
                                     .size(if (isImeVisible) 34.dp else 38.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0x90130F26))
-                                    .border(1.dp, Color(0x508B5CF6), RoundedCornerShape(12.dp))
-                                    .clickable { showBotSettings = true }
+                                    .graphicsLayer { scaleX = stScale; scaleY = stScale }
+                                    .clip(RoundedCornerShape(13.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF1C1040), Color(0xFF0F0828))
+                                        )
+                                    )
+                                    .border(
+                                        BorderStroke(
+                                            1.2.dp,
+                                            Brush.linearGradient(
+                                                listOf(Color(0xFF7C3AED), Color(0xFF4C1D95), Color(0xFF9333EA))
+                                            )
+                                        ),
+                                        RoundedCornerShape(13.dp)
+                                    )
+                                    .clickable(interactionSource = stInteraction, indication = null) { showBotSettings = true }
                                     .testTag("bot_settings_button"),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Settings,
                                     contentDescription = "Ayarlar",
-                                    tint = AppColors.PrimaryPurple,
+                                    tint = Color(0xFFB99AF8),
                                     modifier = Modifier.size(if (isImeVisible) 17.dp else 18.dp)
                                 )
                             }
                         }
                     }
 
-                    // Expandable Header Stats Banner (Personal Mode Only) - Only when keyboard is closed
+                    // Search bar (slide-in)
+                    AnimatedVisibility(
+                        visible = showSearchBar,
+                        enter = slideInVertically(tween(220, easing = FastOutSlowInEasing)) { -it } + fadeIn(tween(220)),
+                        exit = slideOutVertically(tween(180)) { -it } + fadeOut(tween(180))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0xFF140D2E))
+                                    .border(1.dp, Brush.linearGradient(listOf(Color(0xFF7C3AED), Color(0xFF4C1D95))), RoundedCornerShape(14.dp))
+                                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                            ) {
+                                if (localSearchQuery.isEmpty()) {
+                                    Text("Mesajlarda ara...", color = Color(0x60CDA8FF), fontSize = 13.sp)
+                                }
+                                androidx.compose.foundation.text.BasicTextField(
+                                    value = localSearchQuery,
+                                    onValueChange = { q ->
+                                        localSearchQuery = q
+                                        viewModel.setSearchQuery(q.ifBlank { null })
+                                    },
+                                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 13.sp),
+                                    singleLine = true,
+                                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFFA855F7)),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            if (localSearchQuery.isNotEmpty()) {
+                                val clrInteraction = remember { MutableInteractionSource() }
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0x30F87171))
+                                        .border(1.dp, Color(0x60F87171), RoundedCornerShape(10.dp))
+                                        .clickable(interactionSource = clrInteraction, indication = null) {
+                                            localSearchQuery = ""
+                                            viewModel.clearSearch()
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Close, "Temizle", tint = Color(0xFFF87171), modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+
+                    // Search results summary
+                    AnimatedVisibility(
+                        visible = showSearchBar && searchResults.isNotEmpty(),
+                        enter = fadeIn(tween(200)),
+                        exit = fadeOut(tween(150))
+                    ) {
+                        Text(
+                            text = "${searchResults.size} sonuç bulundu",
+                            color = Color(0xFF9D74E8),
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(start = 16.dp, bottom = 6.dp)
+                        )
+
+                    // Expandable Header Stats Banner (Personal Mode Only)
                     AnimatedVisibility(
                         visible = !isImeVisible && isStatsExpanded && bot.mode == "personal",
-                        enter = fadeIn(tween(200)) + expandVertically(tween(200)),
-                        exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
+                        enter = fadeIn(tween(250)) + expandVertically(tween(250, easing = FastOutSlowInEasing)),
+                        exit = fadeOut(tween(180)) + shrinkVertically(tween(180))
                     ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 4.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xE6140A28))
-                                .border(1.dp, Color(0x608B5CF6), RoundedCornerShape(12.dp))
-                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                .padding(horizontal = 14.dp, vertical = 5.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFF120B28), Color(0xFF0C0720))
+                                    )
+                                )
+                                .border(
+                                    BorderStroke(
+                                        1.dp,
+                                        Brush.linearGradient(
+                                            listOf(Color(0x809333EA), Color(0x404C1D95), Color(0x807C3AED))
+                                        )
+                                    ),
+                                    RoundedCornerShape(16.dp)
+                                )
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "✨ " + (userSettings?.selectedModel?.ifBlank { "Gemini 2.5 Flash" } ?: "Gemini 2.5 Flash") + " 🔥",
-                                    color = AppColors.PurpleSoft,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                // Model pill — left
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(7.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                Brush.radialGradient(
+                                                    listOf(Color(0xFFC084FC), Color(0xFF7C3AED))
+                                                )
+                                            )
+                                    )
+                                    Text(
+                                        text = userSettings?.selectedModel?.ifBlank { "Gemini 2.0 Flash" } ?: "Gemini 2.0 Flash",
+                                        color = Color(0xFFCDA8FF),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
 
+                                // Stats badges — right
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
+                                    // Affection badge — warm pink gradient
                                     Box(
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(AppColors.Hex_381224)
-                                            .border(1.dp, Color(0x60FF4D6D), RoundedCornerShape(8.dp))
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(Color(0x35E11D48))
+                                            .border(
+                                                BorderStroke(
+                                                    0.8.dp,
+                                                    Brush.linearGradient(
+                                                        listOf(Color(0xFFFB7185), Color(0xFFE11D48))
+                                                    )
+                                                ),
+                                                RoundedCornerShape(20.dp)
+                                            )
+                                            .padding(horizontal = 10.dp, vertical = 4.dp)
                                     ) {
-                                        Text("❤️ ${emotionState.affection}%", color = AppColors.Hex_FF4D6D, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            text = "❤️ ${emotionState.affection}%",
+                                            color = Color(0xFFFDA4AF),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold
+                                        )
                                     }
+                                    // Trust badge — cool blue gradient
                                     Box(
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(AppColors.Hex_0F253E)
-                                            .border(1.dp, Color(0x6038BDF8), RoundedCornerShape(8.dp))
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(Color(0x3538BDF8))
+                                            .border(
+                                                BorderStroke(
+                                                    0.8.dp,
+                                                    Brush.linearGradient(
+                                                        listOf(Color(0xFF38BDF8), Color(0xFF0EA5E9))
+                                                    )
+                                                ),
+                                                RoundedCornerShape(20.dp)
+                                            )
+                                            .padding(horizontal = 10.dp, vertical = 4.dp)
                                     ) {
-                                        Text("🛡️ ${emotionState.trust}%", color = AppColors.Cyan, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            text = "🛡️ ${emotionState.trust}%",
+                                            color = Color(0xFF7DD3FC),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold
+                                        )
                                     }
                                 }
                             }
@@ -682,218 +932,311 @@ fun ChatScreen(
                     }
 
                     if (isSpeaking && !isImeVisible) {
-                        Row(
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(AppColors.Hex_2A1C38)
-                                .padding(horizontal = 16.dp, vertical = 6.dp),
+                                .padding(horizontal = 14.dp, vertical = 3.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFF1A0A38), Color(0xFF100626))
+                                    )
+                                )
+                                .border(
+                                    BorderStroke(
+                                        1.dp,
+                                        Brush.linearGradient(
+                                            listOf(Color(0x809333EA), Color(0x404C1D95))
+                                        )
+                                    ),
+                                    RoundedCornerShape(12.dp)
+                                )
+                                .padding(horizontal = 14.dp, vertical = 7.dp)
+                        ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
                                 text = "🔊 Sesli okunuyor...",
-                                color = AppColors.PurpleSoft,
+                                color = Color(0xFFCDA8FF),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
-                            TextButton(
-                                onClick = onStopSpeaking,
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0x30A855F7))
+                                    .border(1.dp, Color(0x50A855F7), RoundedCornerShape(8.dp))
+                                    .clickable { onStopSpeaking() }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
                             ) {
-                                Text("⏹️ Okumayı Durdur", color = AppColors.PurpleSoft, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("⏹️ Durdur", color = Color(0xFFCDA8FF), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                 }
             },
             bottomBar = {
+                // ── Bottom bar infinite animations ──────────────────────────
+                val inputInfinite = rememberInfiniteTransition(label = "inputBar")
+                val rpButtonGlow by inputInfinite.animateFloat(
+                    initialValue = 0.55f, targetValue = 1.0f,
+                    animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                    label = "rpGlow"
+                )
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(EmochiSurface.copy(alpha = 0.88f))
-                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
-                ) {
-                // Quick RP prompt suggestion chips
-                val quickPrompts = listOf(
-                    "🎭 Sahneyi derinleştir" to "Lütfen şu anki sahneyi ve karakterin iç dünyasını daha detaylı, atmosferik bir şekilde betimleyerek yanıt ver.",
-                    "💡 Ne yapmalıyım?" to "Karakter bana bakıp şu anda ne yapmam gerektiğiyle ilgili imalı bir öneride bulunsun.",
-                    "🔥 Duyguyu yükselt" to "Aramızdaki duygusal çekimi ve gerilimi hissettirecek şekilde davran.",
-                    "🎲 Sürpriz hamle" to "Karakter beklenmedik, şaşırtıcı bir tepki versin veya yeni bir olay başlatsın."
-                )
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val chipBorder = BorderStroke(
-                        width = 1.dp,
-                        brush = Brush.linearGradient(
-                            colors = listOf(
-                                Color(0x90C084FC),
-                                Color(0x306B21A8)
-                            )
-                        )
-                    )
-                    quickPrompts.forEach { (label, promptText) ->
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(Color(0x90140A28))
-                                .border(chipBorder, RoundedCornerShape(20.dp))
-                                .clickable(enabled = !isSending) {
-                                    onSendMessage(promptText)
-                                }
-                                .padding(horizontal = 14.dp, vertical = 8.dp)
-                        ) {
-                            Text(
-                                text = label,
-                                color = AppColors.TextLight,
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                }
-
-                // Input bar matching screenshot
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, bottom = 10.dp, top = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // +RP✦ button with glowing aura and sweep border
-                    Box(
-                        modifier = Modifier
-                            .size(46.dp)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.radialGradient(
-                                    colors = listOf(AppColors.CardPurpleDeep, AppColors.Hex_130826)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    Color(0xD0060412),
+                                    Color(0xFF060412)
                                 )
                             )
-                            .border(
-                                BorderStroke(
-                                    width = 1.8.dp,
-                                    brush = Brush.sweepGradient(
-                                        listOf(
-                                            AppColors.PurpleLight,
-                                            AppColors.PrimaryViolet,
-                                            AppColors.PurpleAccent,
-                                            AppColors.PurpleLight
-                                        )
-                                    )
-                                ),
-                                CircleShape
-                            )
-                            .clickable {
-                                val trimmed = inputText.trim()
-                                if (trimmed.isBlank()) {
-                                    inputText = "*...*"
-                                } else if (trimmed.startsWith("*") && trimmed.endsWith("*") && trimmed.length >= 2) {
-                                    inputText = trimmed.substring(1, trimmed.length - 1)
-                                } else {
-                                    inputText = "*$trimmed*"
-                                }
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "+RP✦",
-                            color = AppColors.PurpleLight,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold
                         )
-                    }
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    OutlinedTextField(
-                        value = inputText,
-                        onValueChange = { inputText = it },
-                        placeholder = { Text("Bir mesaj yazın...", color = AppColors.TextSlate, fontSize = 13.5.sp) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("chat_input_field"),
-                        shape = RoundedCornerShape(24.dp),
-                        colors = customTextFieldColors(),
-                        maxLines = 4
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                ) {
+                    // ── Quick RP chips ──────────────────────────────────────
+                    val quickPrompts = listOf(
+                        "🎭 Sahneyi Derinleştir" to "Lütfen şu anki sahneyi ve karakterin iç dünyasını daha detaylı, atmosferik bir şekilde betimleyerek yanıt ver.",
+                        "💡 Ne Yapmalıyım?" to "Karakter bana bakıp şu anda ne yapmam gerektiğiyle ilgili imalı bir öneride bulunsun.",
+                        "🔥 Duyguyu Yükselt" to "Aramızdaki duygusal çekimi ve gerilimi hissettirecek şekilde davran.",
+                        "🎲 Sürpriz Hamle" to "Karakter beklenmedik, şaşırtıcı bir tepki versin veya yeni bir olay başlatsın."
                     )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    // Send paperplane button with outer pulsing halo
-                    val isSendEnabled = inputText.isNotBlank() && !isSending
-                    Box(
-                        modifier = Modifier.size(48.dp),
-                        contentAlignment = Alignment.Center
+                    val chipScrollState = rememberScrollState()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(chipScrollState)
+                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        if (isSendEnabled) {
-                            // Pulsing glowing background halo when typing
+                        quickPrompts.forEachIndexed { idx, (label, promptText) ->
+                            val chipInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                            val chipPressed by chipInteraction.collectIsPressedAsState()
+                            val chipScale by animateFloatAsState(
+                                targetValue = if (chipPressed) 0.94f else 1f,
+                                animationSpec = tween(90),
+                                label = "chipScale_$idx"
+                            )
+                            val chipAlpha by animateFloatAsState(
+                                targetValue = if (isSending) 0.38f else 1f,
+                                animationSpec = tween(200),
+                                label = "chipAlpha_$idx"
+                            )
                             Box(
                                 modifier = Modifier
-                                    .fillMaxSize()
-                                    .graphicsLayer {
-                                        scaleX = pulseScale
-                                        scaleY = pulseScale
-                                    }
-                                    .clip(CircleShape)
-                                    .background(AppColors.PrimaryViolet.copy(alpha = pulseGlowAlpha * 0.45f))
-                            )
+                                    .graphicsLayer { scaleX = chipScale; scaleY = chipScale; alpha = chipAlpha }
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF1C1040), Color(0xFF110A2C))
+                                        )
+                                    )
+                                    .border(
+                                        BorderStroke(
+                                            1.dp,
+                                            Brush.linearGradient(
+                                                listOf(Color(0xFFA855F7), Color(0xFF7C3AED), Color(0xFF4C1D95))
+                                            )
+                                        ),
+                                        RoundedCornerShape(20.dp)
+                                    )
+                                    .clickable(
+                                        interactionSource = chipInteraction,
+                                        indication = null,
+                                        enabled = !isSending
+                                    ) { onSendMessage(promptText) }
+                                    .padding(horizontal = 14.dp, vertical = 8.dp)
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = Color(0xFFCDA8FF),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
+                    }
 
+                    // ── Thin separator ──────────────────────────────────────
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(0.8.dp)
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color.Transparent, Color(0x40A855F7), Color(0x20C084FC), Color.Transparent)
+                                )
+                            )
+                    )
+
+                    // ── Input row ───────────────────────────────────────────
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 12.dp, end = 12.dp, bottom = 12.dp, top = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // +RP✦ button — glowing when active
+                        val isRpMode = inputText.trim().let { it.startsWith("*") && it.endsWith("*") && it.length >= 2 }
+                        val rpInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                        val rpPressed by rpInteraction.collectIsPressedAsState()
+                        val rpScale by animateFloatAsState(
+                            targetValue = if (rpPressed) 0.91f else 1f,
+                            animationSpec = tween(100),
+                            label = "rpScale"
+                        )
                         Box(
                             modifier = Modifier
-                                .size(44.dp)
+                                .size(46.dp)
+                                .graphicsLayer { scaleX = rpScale; scaleY = rpScale }
                                 .clip(CircleShape)
                                 .background(
-                                    if (isSendEnabled) {
-                                        Brush.linearGradient(
-                                            listOf(AppColors.PurpleSoft, AppColors.PurpleDark, AppColors.PurpleDarkest)
-                                        )
-                                    } else {
-                                        Brush.linearGradient(
-                                            listOf(Color(0x403B0764), Color(0x401E1035))
-                                        )
-                                    }
+                                    if (isRpMode) Brush.radialGradient(
+                                        listOf(Color(0xFF6D28D9), Color(0xFF3B1070))
+                                    ) else Brush.verticalGradient(
+                                        listOf(Color(0xFF291060), Color(0xFF150830))
+                                    )
                                 )
                                 .border(
                                     BorderStroke(
-                                        width = 1.3.dp,
-                                        brush = if (isSendEnabled) {
-                                            Brush.sweepGradient(
-                                                listOf(AppColors.White, AppColors.PurpleLight, AppColors.PrimaryViolet, AppColors.White)
+                                        width = if (isRpMode) 2.dp else 1.5.dp,
+                                        brush = Brush.sweepGradient(
+                                            listOf(
+                                                AppColors.PurpleLight.copy(alpha = if (isRpMode) 1f else rpButtonGlow * 0.7f),
+                                                AppColors.PrimaryViolet.copy(alpha = if (isRpMode) 1f else rpButtonGlow * 0.5f),
+                                                AppColors.PurpleAccent.copy(alpha = if (isRpMode) 1f else rpButtonGlow * 0.7f),
+                                                AppColors.PurpleLight.copy(alpha = if (isRpMode) 1f else rpButtonGlow * 0.7f)
                                             )
-                                        } else {
-                                            Brush.linearGradient(
-                                                listOf(Color(0x407C3AED), Color(0x203B0764))
-                                            )
-                                        }
+                                        )
                                     ),
                                     CircleShape
                                 )
-                                .clickable(enabled = isSendEnabled) {
-                                    val text = inputText
-                                    inputText = ""
-                                    onSendMessage(text)
-                                }
-                                .testTag("send_message_button"),
+                                .clickable(interactionSource = rpInteraction, indication = null) {
+                                    val trimmed = inputText.trim()
+                                    if (trimmed.isBlank()) {
+                                        inputText = "*...*"
+                                    } else if (trimmed.startsWith("*") && trimmed.endsWith("*") && trimmed.length >= 2) {
+                                        inputText = trimmed.substring(1, trimmed.length - 1)
+                                    } else {
+                                        inputText = "*$trimmed*"
+                                    }
+                                },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Send,
-                                contentDescription = "Gönder",
-                                tint = if (isSendEnabled) Color.White else Color(0x60A78BFA),
-                                modifier = Modifier.size(20.dp)
+                            Text(
+                                text = if (isRpMode) "✦RP" else "+RP✦",
+                                color = if (isRpMode) Color.White else AppColors.PurpleLight,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.ExtraBold
                             )
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Input field — custom bordered
+                        OutlinedTextField(
+                            value = inputText,
+                            onValueChange = { inputText = it },
+                            placeholder = {
+                                Text(
+                                    text = if (isRpMode) "Eylem veya diyalog...*" else "Bir mesaj yazın...",
+                                    color = AppColors.TextSlate.copy(alpha = 0.7f),
+                                    fontSize = 13.5.sp
+                                )
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("chat_input_field"),
+                            shape = RoundedCornerShape(22.dp),
+                            colors = customTextFieldColors(),
+                            maxLines = 4
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Send button — multi-layer premium
+                        val isSendEnabled = inputText.isNotBlank() && !isSending
+                        val sendInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                        val sendPressed by sendInteraction.collectIsPressedAsState()
+                        val sendScale by animateFloatAsState(
+                            targetValue = if (sendPressed) 0.88f else 1f,
+                            animationSpec = tween(90),
+                            label = "sendScale"
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(50.dp)
+                                .graphicsLayer { scaleX = sendScale; scaleY = sendScale },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // Outer pulse halo — only when enabled
+                            if (isSendEnabled) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(50.dp)
+                                        .graphicsLayer {
+                                            scaleX = pulseScale
+                                            scaleY = pulseScale
+                                            alpha = pulseGlowAlpha * 0.5f
+                                        }
+                                        .clip(CircleShape)
+                                        .background(
+                                            Brush.radialGradient(
+                                                listOf(Color(0xFFA855F7), Color(0x007C3AED))
+                                            )
+                                        )
+                                )
+                            }
+                            // Button core
+                            Box(
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isSendEnabled) Brush.linearGradient(
+                                            listOf(Color(0xFFBB7BFF), Color(0xFF9333EA), Color(0xFF5B21B6))
+                                        ) else Brush.linearGradient(
+                                            listOf(Color(0x201A0840), Color(0x200C0820))
+                                        )
+                                    )
+                                    .border(
+                                        BorderStroke(
+                                            1.5.dp,
+                                            if (isSendEnabled) Brush.sweepGradient(EmochiGradients.avatarBorderSweep)
+                                            else Brush.linearGradient(listOf(Color(0x20A855F7), Color(0x10A855F7)))
+                                        ),
+                                        CircleShape
+                                    )
+                                    .clickable(
+                                        interactionSource = sendInteraction,
+                                        indication = null,
+                                        enabled = isSendEnabled
+                                    ) {
+                                        val text = inputText
+                                        inputText = ""
+                                        onSendMessage(text)
+                                    }
+                                    .testTag("send_message_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Send,
+                                    contentDescription = "Gönder",
+                                    tint = if (isSendEnabled) Color.White else Color(0x35A78BFA),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
     ) { innerPadding ->
         Box(
             modifier = Modifier
@@ -904,20 +1247,105 @@ fun ChatScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 errorMessage?.let { err ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(AppColors.CardWine)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = true,
+                        enter = androidx.compose.animation.slideInVertically(
+                            animationSpec = tween(280, easing = FastOutSlowInEasing)
+                        ) { -it } + fadeIn(tween(200)),
+                        exit = androidx.compose.animation.slideOutVertically(
+                            animationSpec = tween(220)
+                        ) { -it } + fadeOut(tween(160))
                     ) {
-                        Text(err, color = EmochiError, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                        IconButton(
-                            onClick = onClearError,
-                            modifier = Modifier.size(24.dp)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFF3D1018), Color(0xFF1F0A10))
+                                    )
+                                )
+                                .border(
+                                    BorderStroke(
+                                        1.dp,
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFFF87171), Color(0xFFDC2626), Color(0xFFF87171))
+                                        )
+                                    ),
+                                    RoundedCornerShape(14.dp)
+                                )
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
                         ) {
-                            Icon(Icons.Default.Close, contentDescription = "Hatayı Kapat", tint = EmochiError, modifier = Modifier.size(16.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0x30F87171)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = null,
+                                            tint = EmochiError,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = err,
+                                        color = EmochiError,
+                                        fontSize = 12.sp,
+                                        lineHeight = 16.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (onRetryFromBanner != null) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(Color(0x40F87171))
+                                                .border(1.dp, Color(0x60F87171), RoundedCornerShape(8.dp))
+                                                .clickable { onRetryFromBanner(); onClearError() }
+                                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                        ) {
+                                            Text(
+                                                text = "Tekrar",
+                                                color = EmochiError,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0x25F87171))
+                                            .clickable { onClearError() },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Kapat",
+                                            tint = EmochiError,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -938,40 +1366,117 @@ fun ChatScreen(
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 24.dp),
+                                    .padding(vertical = 32.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = AppColors.CardDarkAbyss),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x408B5CF6)),
-                                    shape = RoundedCornerShape(16.dp),
-                                    modifier = Modifier.fillMaxWidth()
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(24.dp))
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(Color(0xFF130B2E), Color(0xFF0C0720))
+                                            )
+                                        )
+                                        .border(
+                                            BorderStroke(
+                                                1.5.dp,
+                                                Brush.linearGradient(
+                                                    listOf(Color(0xFF9333EA), Color(0xFF4C1D95), Color(0xFF7C3AED))
+                                                )
+                                            ),
+                                            RoundedCornerShape(24.dp)
+                                        )
+                                        .padding(28.dp)
                                 ) {
                                     Column(
-                                        modifier = Modifier.padding(20.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                        verticalArrangement = Arrangement.spacedBy(14.dp)
                                     ) {
-                                        Text(
-                                            text = "✨ $displayName henüz ilk mesajını göndermedi",
-                                            color = Color.White,
-                                            fontSize = 15.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                        )
-                                        Text(
-                                            text = "Aşağıdaki butona dokunarak karakterinizin selamlama mesajını başlatabilir veya hemen mesaj yazmaya başlayabilirsiniz.",
-                                            color = AppColors.TextMuted,
-                                            fontSize = 12.sp,
-                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                        )
-                                        Button(
-                                            onClick = onEnsureOpeningMessage,
-                                            colors = ButtonDefaults.buttonColors(containerColor = AppColors.DeepPurple)
+                                        // Orb visual
+                                        Box(
+                                            modifier = Modifier
+                                                .size(72.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    Brush.radialGradient(
+                                                        listOf(Color(0xFF9333EA), Color(0xFF4C1D95), Color(0xFF1A0840))
+                                                    )
+                                                )
+                                                .border(
+                                                    BorderStroke(
+                                                        2.dp,
+                                                        Brush.sweepGradient(EmochiGradients.avatarBorderSweep)
+                                                    ),
+                                                    CircleShape
+                                                ),
+                                            contentAlignment = Alignment.Center
                                         ) {
-                                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("👋 Karakter İlk Mesajını Yükle", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            Text("✨", fontSize = 28.sp)
+                                        }
+                                        Text(
+                                            text = "$displayName henüz selamlamadı",
+                                            color = Color.White,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                        )
+                                        Text(
+                                            text = "Karakterin selamlama mesajını başlatmak için aşağıya dokun ya da hemen yazmaya başla.",
+                                            color = AppColors.TextMuted,
+                                            fontSize = 12.5.sp,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                            lineHeight = 18.sp
+                                        )
+                                        val emptyBtnInteraction = remember { MutableInteractionSource() }
+                                        val emptyBtnPressed by emptyBtnInteraction.collectIsPressedAsState()
+                                        val emptyBtnScale by animateFloatAsState(
+                                            targetValue = if (emptyBtnPressed) 0.94f else 1f,
+                                            animationSpec = tween(90),
+                                            label = "emptyBtnScale"
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .graphicsLayer { scaleX = emptyBtnScale; scaleY = emptyBtnScale }
+                                                .clip(RoundedCornerShape(16.dp))
+                                                .background(
+                                                    Brush.linearGradient(
+                                                        listOf(Color(0xFFBB7BFF), Color(0xFF9333EA), Color(0xFF5B21B6))
+                                                    )
+                                                )
+                                                .border(
+                                                    BorderStroke(
+                                                        1.5.dp,
+                                                        Brush.linearGradient(
+                                                            listOf(Color(0xFFE9D5FF), Color(0xFFA855F7))
+                                                        )
+                                                    ),
+                                                    RoundedCornerShape(16.dp)
+                                                )
+                                                .clickable(
+                                                    interactionSource = emptyBtnInteraction,
+                                                    indication = null,
+                                                    onClick = onEnsureOpeningMessage
+                                                )
+                                                .padding(horizontal = 22.dp, vertical = 12.dp)
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Refresh,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = Color.White
+                                                )
+                                                Text(
+                                                    "👋 Karakter İlk Mesajını Yükle",
+                                                    color = Color.White,
+                                                    fontSize = 13.5.sp,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -991,35 +1496,96 @@ fun ChatScreen(
                             }
 
                             if (editingMessageId == msg.id) {
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = AppColors.CardDarkAbyss),
-                                    border = androidx.compose.foundation.BorderStroke(1.5.dp, AppColors.DeepPurple),
-                                    shape = RoundedCornerShape(14.dp),
-                                    modifier = Modifier.fillMaxWidth()
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(18.dp))
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(Color(0xFF140B30), Color(0xFF0C071E))
+                                            )
+                                        )
+                                        .border(
+                                            BorderStroke(
+                                                1.5.dp,
+                                                Brush.linearGradient(
+                                                    listOf(Color(0xFF9333EA), Color(0xFF6D28D9), Color(0xFF4C1D95))
+                                                )
+                                            ),
+                                            RoundedCornerShape(18.dp)
+                                        )
+                                        .padding(12.dp)
                                 ) {
-                                    Column(modifier = Modifier.padding(10.dp)) {
+                                    Column {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(bottom = 8.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(20.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0x30A855F7)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text("✏️", fontSize = 10.sp)
+                                            }
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Mesajı Düzenle",
+                                                color = Color(0xFFCDA8FF),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                         OutlinedTextField(
                                             value = editingText,
                                             onValueChange = { editingText = it },
                                             modifier = Modifier.fillMaxWidth(),
-                                            colors = customTextFieldColors()
+                                            colors = customTextFieldColors(),
+                                            shape = RoundedCornerShape(14.dp)
                                         )
                                         Row(
-                                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                                            horizontalArrangement = Arrangement.End
+                                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                                            horizontalArrangement = Arrangement.End,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            TextButton(onClick = { editingMessageId = null }) {
-                                                Text("Vazgeç", color = AppColors.TextMuted, fontSize = 12.sp)
-                                            }
-                                            Button(
-                                                onClick = {
-                                                    val text = editingText
-                                                    editingMessageId = null
-                                                    onEditMessage(msg.id, text)
-                                                },
-                                                colors = ButtonDefaults.buttonColors(containerColor = AppColors.DeepPurple)
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(Color(0x20A855F7))
+                                                    .border(1.dp, Color(0x40A855F7), RoundedCornerShape(10.dp))
+                                                    .clickable { editingMessageId = null }
+                                                    .padding(horizontal = 14.dp, vertical = 7.dp)
                                             ) {
-                                                Text("Kaydet", color = Color.White, fontSize = 12.sp)
+                                                Text("Vazgeç", color = AppColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                            }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(
+                                                        Brush.linearGradient(
+                                                            listOf(Color(0xFF9333EA), Color(0xFF5B21B6))
+                                                        )
+                                                    )
+                                                    .border(
+                                                        BorderStroke(
+                                                            1.dp,
+                                                            Brush.linearGradient(
+                                                                listOf(Color(0xFFE9D5FF), Color(0xFFA855F7))
+                                                            )
+                                                        ),
+                                                        RoundedCornerShape(10.dp)
+                                                    )
+                                                    .clickable {
+                                                        val text = editingText
+                                                        editingMessageId = null
+                                                        onEditMessage(msg.id, text)
+                                                    }
+                                                    .padding(horizontal = 18.dp, vertical = 7.dp)
+                                            ) {
+                                                Text("Kaydet", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                             }
                                         }
                                     }
@@ -1038,62 +1604,50 @@ fun ChatScreen(
                                     ) {
                                         Text(
                                             text = bot.userCharName.ifBlank { "Kullanıcı" },
-                                            color = AppColors.PrimaryViolet,
+                                            color = Color(0xFFCDA8FF),
                                             fontSize = 11.5.sp,
                                             fontWeight = FontWeight.Bold
                                         )
-                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Spacer(modifier = Modifier.width(7.dp))
+                                        // User avatar — gradient fill + sweep border
                                         Box(
                                             modifier = Modifier
-                                                .size(28.dp)
+                                                .size(30.dp)
                                                 .clip(CircleShape)
-                                                .border(1.dp, AppColors.DeepPurple, CircleShape)
-                                                .background(AppColors.CardDarkPurple),
+                                                .background(
+                                                    Brush.radialGradient(
+                                                        listOf(Color(0xFF6D28D9), Color(0xFF3B1070))
+                                                    )
+                                                )
+                                                .border(
+                                                    BorderStroke(
+                                                        1.5.dp,
+                                                        Brush.sweepGradient(EmochiGradients.avatarBorderSweep)
+                                                    ),
+                                                    CircleShape
+                                                ),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Text(
                                                 text = (bot.userCharName.ifBlank { "K" }).take(1).uppercase(),
                                                 color = Color.White,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.ExtraBold
                                             )
                                         }
                                     }
 
-                                    // User Message Box with smooth corners, rich glassmorphic gradient fill, and multi-layered purple neon glow
+                                    // User Message Box — sıcak derin mor, tek temiz border
                                     val userShape = RoundedCornerShape(topStart = 20.dp, topEnd = 6.dp, bottomStart = 20.dp, bottomEnd = 20.dp)
                                     Box(
                                         modifier = Modifier
                                             .widthIn(min = 80.dp, max = 310.dp)
-                                            // Layer 1: Outer soft glow halo
-                                            .border(4.dp, Color(0x30A855F7), userShape)
-                                            // Layer 2: Medium glow halo
-                                            .border(2.dp, Color(0x60C084FC), userShape)
-                                            .clip(userShape)
-                                            // Glassmorphic gradient background with depth
-                                            .background(
-                                                Brush.verticalGradient(
-                                                    colors = listOf(
-                                                        Color(0x8023104D), // Rich semi-transparent dark violet top
-                                                        Color(0x950E0620)  // Deep dark purple bottom
-                                                    )
-                                                )
-                                            )
-                                            // Layer 3: Crisp glowing gradient border line
                                             .border(
-                                                BorderStroke(
-                                                    width = 1.3.dp,
-                                                    brush = Brush.linearGradient(
-                                                        colors = listOf(
-                                                            AppColors.PurpleLight, // Crisp bright white/lila top-left
-                                                            AppColors.PrimaryViolet, // Glowing neon violet
-                                                            AppColors.DeepPurple, // Purple
-                                                            AppColors.PurpleDarker  // Deep violet bottom-right
-                                                        )
-                                                    )
-                                                ),
-                                                shape = userShape
+                                                BorderStroke(1.5.dp, EmochiGradients.chatBubbleUserBorder),
+                                                userShape
                                             )
+                                            .clip(userShape)
+                                            .background(EmochiGradients.chatBubbleUser)
                                             .clickable {
                                                 expandedUserMenuMessageId = if (expandedUserMenuMessageId == msg.id) null else msg.id
                                             }
@@ -1133,116 +1687,93 @@ fun ChatScreen(
                                         modifier = Modifier.padding(end = 6.dp)
                                     )
 
-                                    // User Message Action Pills Row (Copy, Rewind, More Actions)
+                                    // User Message Action Pills
                                     Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(7.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier
                                             .horizontalScroll(rememberScrollState())
-                                            .padding(top = 2.dp, bottom = 4.dp)
+                                            .padding(top = 3.dp, bottom = 4.dp)
                                     ) {
-                                        val uPillBorder = BorderStroke(
-                                            width = 1.dp,
-                                            brush = Brush.linearGradient(
-                                                colors = listOf(
-                                                    Color(0x90C084FC),
-                                                    Color(0x306B21A8)
-                                                )
+                                        @Composable
+                                        fun ActionPill(
+                                            label: String,
+                                            emoji: String,
+                                            isDanger: Boolean = false,
+                                            onClick: () -> Unit
+                                        ) {
+                                            val pillInteraction = remember { MutableInteractionSource() }
+                                            val pillPressed by pillInteraction.collectIsPressedAsState()
+                                            val pillScale by animateFloatAsState(
+                                                targetValue = if (pillPressed) 0.93f else 1f,
+                                                animationSpec = tween(80),
+                                                label = "pillScale"
                                             )
-                                        )
-                                        val uPillBg = Color(0x90140A28)
-
-                                        // 1. Copy Pill
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(uPillBg)
-                                                .border(uPillBorder, RoundedCornerShape(14.dp))
-                                                .clickable {
-                                                    val cleanText = cleanCopyText(msg.text)
-                                                    clipboardManager.setText(AnnotatedString(cleanText))
-                                                    android.widget.Toast.makeText(context, "Kopyalandı", android.widget.Toast.LENGTH_SHORT).show()
+                                            Box(
+                                                modifier = Modifier
+                                                    .graphicsLayer { scaleX = pillScale; scaleY = pillScale }
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(
+                                                        if (isDanger) Brush.linearGradient(
+                                                            listOf(Color(0xFF2A0A0A), Color(0xFF1A0606))
+                                                        ) else Brush.linearGradient(
+                                                            listOf(Color(0xFF190E35), Color(0xFF100825))
+                                                        )
+                                                    )
+                                                    .border(
+                                                        BorderStroke(
+                                                            1.dp,
+                                                            if (isDanger) Brush.linearGradient(
+                                                                listOf(Color(0xFFF87171), Color(0xFFDC2626))
+                                                            ) else Brush.linearGradient(
+                                                                listOf(Color(0x90C084FC), Color(0x406B21A8))
+                                                            )
+                                                        ),
+                                                        RoundedCornerShape(12.dp)
+                                                    )
+                                                    .clickable(
+                                                        interactionSource = pillInteraction,
+                                                        indication = null,
+                                                        onClick = onClick
+                                                    )
+                                                    .padding(horizontal = 11.dp, vertical = 6.dp)
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Text(emoji, fontSize = 11.sp)
+                                                    Text(
+                                                        label,
+                                                        color = if (isDanger) Color(0xFFFCA5A5) else AppColors.TextLight,
+                                                        fontSize = 11.5.sp,
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
                                                 }
-                                                .padding(horizontal = 11.dp, vertical = 6.dp)
-                                        ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text("📋", fontSize = 11.sp)
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text("Kopyala", color = AppColors.TextLight, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                                             }
                                         }
 
-                                        // 2. Rewind Pill ("⏪ Buradan Devam Et")
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(uPillBg)
-                                                .border(uPillBorder, RoundedCornerShape(14.dp))
-                                                .clickable {
-                                                    rewindTargetMessageId = msg.id
-                                                }
-                                                .padding(horizontal = 11.dp, vertical = 6.dp)
-                                        ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text("⏪", fontSize = 11.sp)
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text("Buradan Devam Et", color = AppColors.TextLight, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                                            }
+                                        ActionPill("Kopyala", "📋") {
+                                            val cleanText = cleanCopyText(msg.text)
+                                            clipboardManager.setText(AnnotatedString(cleanText))
+                                            android.widget.Toast.makeText(context, "Kopyalandı", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                        ActionPill("Devam Et", "⏪") {
+                                            rewindTargetMessageId = msg.id
+                                        }
+                                        ActionPill("•••", "") {
+                                            expandedMenuMessageId = if (expandedMenuMessageId == msg.id) null else msg.id
                                         }
 
-                                        // 3. More Actions Pill (•••)
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(uPillBg)
-                                                .border(uPillBorder, RoundedCornerShape(14.dp))
-                                                .clickable {
-                                                    expandedMenuMessageId = if (expandedMenuMessageId == msg.id) null else msg.id
-                                                }
-                                                .padding(horizontal = 13.dp, vertical = 6.dp)
-                                        ) {
-                                            Text("•••", color = AppColors.TextLight, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                        }
-
-                                        // Expanded items (Edit / Delete) when ••• is toggled
                                         if (expandedMenuMessageId == msg.id) {
-                                            // Edit Pill
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(12.dp))
-                                                    .background(AppColors.CardDarkViolet)
-                                                    .border(1.dp, Color(0x508B5CF6), RoundedCornerShape(12.dp))
-                                                    .clickable {
-                                                        editingMessageId = msg.id
-                                                        editingText = msg.text
-                                                        expandedMenuMessageId = null
-                                                    }
-                                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                                            ) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text("✏️", fontSize = 11.sp)
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Düzenle", color = AppColors.TextSecondary, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                                                }
+                                            ActionPill("Düzenle", "✏️") {
+                                                editingMessageId = msg.id
+                                                editingText = msg.text
+                                                expandedMenuMessageId = null
                                             }
-
-                                            // Delete Pill
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(12.dp))
-                                                    .background(AppColors.CardDarkViolet)
-                                                    .border(1.dp, Color(0x508B5CF6), RoundedCornerShape(12.dp))
-                                                    .clickable {
-                                                        expandedMenuMessageId = null
-                                                        onDeleteMessage(msg.id)
-                                                    }
-                                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                                            ) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text("🗑️", fontSize = 11.sp)
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Sil", color = AppColors.TextSecondary, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                                                }
+                                            ActionPill("Sil", "🗑️", isDanger = true) {
+                                                expandedMenuMessageId = null
+                                                onDeleteMessage(msg.id)
                                             }
                                         }
                                     }
@@ -1254,31 +1785,49 @@ fun ChatScreen(
                                     horizontalArrangement = Arrangement.Start,
                                     verticalAlignment = Alignment.Top
                                 ) {
-                                    // Avatar
+                                    // Avatar — sweep border + soft glow halo
                                     Box(
-                                        modifier = Modifier
-                                            .size(38.dp)
-                                            .clip(CircleShape)
-                                            .border(1.5.dp, AppColors.DeepPurple, CircleShape),
+                                        modifier = Modifier.size(42.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        if (bot.avatarUrl.isNotBlank()) {
-                                            coil.compose.AsyncImage(
-                                                model = bot.avatarUrl,
+                                        // Soft glow halo behind avatar
+                                        Box(
+                                            modifier = Modifier
+                                                .size(42.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    Brush.radialGradient(
+                                                        listOf(Color(0x30A855F7), Color.Transparent)
+                                                    )
+                                                )
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .size(38.dp)
+                                                .clip(CircleShape)
+                                                .border(
+                                                    BorderStroke(
+                                                        1.8.dp,
+                                                        Brush.sweepGradient(EmochiGradients.avatarBorderSweep)
+                                                    ),
+                                                    CircleShape
+                                                )
+                                                .padding(2.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            com.example.ui.components.BotAvatarImage(
+                                                avatarUrl = bot.avatarUrl.takeIf { it.isNotBlank() },
                                                 contentDescription = displayName,
                                                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                                modifier = Modifier
-                                                    .size(38.dp)
-                                                    .clip(CircleShape)
-                                            )
-                                        } else {
-                                            androidx.compose.foundation.Image(
-                                                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_cosmic_orb),
-                                                contentDescription = displayName,
-                                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                                modifier = Modifier
-                                                    .size(38.dp)
-                                                    .clip(CircleShape)
+                                                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                                fallback = {
+                                                    androidx.compose.foundation.Image(
+                                                        painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_cosmic_orb),
+                                                        contentDescription = displayName,
+                                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                                        modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                                    )
+                                                }
                                             )
                                         }
                                     }
@@ -1295,45 +1844,44 @@ fun ChatScreen(
                                             modifier = Modifier.padding(bottom = 4.dp, start = 2.dp)
                                         )
 
-                                        // AI Bubble Box with smooth corners, rich glassmorphic gradient fill, and multi-layered purple neon glow
+                                        // AI Bubble Box — soğuk derin gece, subtle border
                                         val aiShape = RoundedCornerShape(topStart = 6.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 22.dp)
+                                        val isThisStreaming = streamingMsgId == msg.id
+                                        val displayText = if (isThisStreaming && streamingText != null) streamingText else msg.text
+
+                                        // Cursor blink animation
+                                        val cursorInfinite = rememberInfiniteTransition(label = "cursor_${msg.id}")
+                                        val cursorAlpha by if (isThisStreaming) {
+                                            cursorInfinite.animateFloat(
+                                                initialValue = 1f, targetValue = 0f,
+                                                animationSpec = infiniteRepeatable(tween(500), RepeatMode.Reverse),
+                                                label = "cursorBlink"
+                                            )
+                                        } else {
+                                            cursorInfinite.animateFloat(
+                                                initialValue = 0f, targetValue = 0f,
+                                                animationSpec = infiniteRepeatable(tween(1000), RepeatMode.Restart),
+                                                label = "cursorOff"
+                                            )
+                                        }
+
+                                        val isSearchMatch = showSearchBar && localSearchQuery.isNotBlank() && searchResults.any { it.id == msg.id }
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                // Layer 1: Outer soft glow halo
-                                                .border(4.dp, Color(0x30A855F7), aiShape)
-                                                // Layer 2: Medium glow halo
-                                                .border(2.dp, Color(0x60C084FC), aiShape)
-                                                .clip(aiShape)
-                                                // Glassmorphic gradient background with depth
-                                                .background(
-                                                    Brush.verticalGradient(
-                                                        colors = listOf(
-                                                            Color(0x8023104D), // Rich semi-transparent dark violet top
-                                                            Color(0x950E0620)  // Deep dark purple bottom
-                                                        )
-                                                    )
-                                                )
-                                                // Layer 3: Crisp glowing gradient border line
                                                 .border(
-                                                    BorderStroke(
-                                                        width = 1.3.dp,
-                                                        brush = Brush.linearGradient(
-                                                            colors = listOf(
-                                                                AppColors.PurpleLight, // Crisp bright white/lila top-left
-                                                                AppColors.PrimaryViolet, // Glowing neon violet
-                                                                AppColors.DeepPurple, // Purple
-                                                                AppColors.PurpleDarker  // Deep violet bottom-right
-                                                            )
-                                                        )
-                                                    ),
-                                                    shape = aiShape
+                                                    BorderStroke(if (isSearchMatch) 1.5.dp else 1.dp, if (isSearchMatch) Brush.linearGradient(listOf(Color(0xFFF59E0B), Color(0xFFD97706))) else EmochiGradients.chatBubbleAiBorder),
+                                                    aiShape
                                                 )
+                                                .clip(aiShape)
+                                                .background(if (isSearchMatch) Brush.linearGradient(listOf(Color(0xFF1F1408), Color(0xFF0F0B04))) else EmochiGradients.chatBubbleAi)
                                                 .padding(horizontal = 16.dp, vertical = 14.dp)
                                         ) {
                                             Column {
                                                 Text(
-                                                    text = formatNarrativeText(msg.text),
+                                                    text = formatNarrativeText(displayText) + if (isThisStreaming) "▌".repeat(1).let { c ->
+                                                        if (cursorAlpha > 0.5f) "▌" else ""
+                                                    } else "",
                                                     color = AppColors.TextWhite,
                                                     fontSize = 14.5.sp,
                                                     lineHeight = 22.sp
@@ -1355,26 +1903,52 @@ fun ChatScreen(
                                                     }
                                                     if (!msg.provider.isNullOrBlank()) {
                                                         Spacer(modifier = Modifier.width(6.dp))
-                                                        val providerBadge = when {
-                                                            msg.provider == "llm7" -> "⚡ LLM7"
-                                                            msg.provider == "gemini" -> "✨ Gemini"
-                                                            msg.provider == "groq" -> "🚀 Groq"
-                                                            msg.provider == "claude" -> "🧠 Claude"
-                                                            msg.provider == "openai" -> "🟢 OpenAI"
-                                                            msg.provider.startsWith("custom_") -> "🌐 Custom"
-                                                            else -> msg.provider
+                                                        val providerLabel: String
+                                                        val providerTextColor: Color
+                                                        val providerBg: Color
+                                                        val providerBorder: Color
+                                                        when {
+                                                            msg.provider == "llm7" -> {
+                                                                providerLabel = "⚡ LLM7"; providerTextColor = Color(0xFF86EFAC)
+                                                                providerBg = Color(0x2022C55E); providerBorder = Color(0x6022C55E)
+                                                            }
+                                                            msg.provider == "gemini" -> {
+                                                                providerLabel = "✨ Gemini"; providerTextColor = Color(0xFFCDA8FF)
+                                                                providerBg = Color(0x25A855F7); providerBorder = Color(0x60A855F7)
+                                                            }
+                                                            msg.provider == "groq" -> {
+                                                                providerLabel = "🚀 Groq"; providerTextColor = Color(0xFF93C5FD)
+                                                                providerBg = Color(0x203B82F6); providerBorder = Color(0x603B82F6)
+                                                            }
+                                                            msg.provider == "claude" -> {
+                                                                providerLabel = "🧠 Claude"; providerTextColor = Color(0xFFFBBF24)
+                                                                providerBg = Color(0x20F59E0B); providerBorder = Color(0x60F59E0B)
+                                                            }
+                                                            msg.provider == "openai" -> {
+                                                                providerLabel = "🟢 OpenAI"; providerTextColor = Color(0xFF86EFAC)
+                                                                providerBg = Color(0x2022C55E); providerBorder = Color(0x6022C55E)
+                                                            }
+                                                            msg.provider!!.startsWith("custom_") -> {
+                                                                providerLabel = "🌐 Custom"; providerTextColor = Color(0xFFCDA8FF)
+                                                                providerBg = Color(0x257C3AED); providerBorder = Color(0x607C3AED)
+                                                            }
+                                                            else -> {
+                                                                providerLabel = msg.provider!!; providerTextColor = Color(0xFFCDA8FF)
+                                                                providerBg = Color(0x25A855F7); providerBorder = Color(0x60A855F7)
+                                                            }
                                                         }
-                                                        Surface(
-                                                            color = if (msg.provider == "llm7") Color(0x3000E676) else Color(0x25A78BFA),
-                                                            shape = RoundedCornerShape(4.dp),
-                                                            border = BorderStroke(0.5.dp, if (msg.provider == "llm7") AppColors.SuccessGreen else Color(0x60A78BFA))
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .background(providerBg)
+                                                                .border(0.8.dp, providerBorder, RoundedCornerShape(6.dp))
+                                                                .padding(horizontal = 6.dp, vertical = 2.dp)
                                                         ) {
                                                             Text(
-                                                                text = providerBadge,
-                                                                color = if (msg.provider == "llm7") AppColors.LightGreen else AppColors.PurpleSoft,
+                                                                text = providerLabel,
+                                                                color = providerTextColor,
                                                                 fontSize = 9.5.sp,
-                                                                fontWeight = FontWeight.Bold,
-                                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                                fontWeight = FontWeight.ExtraBold
                                                             )
                                                         }
                                                     }
@@ -1395,35 +1969,124 @@ fun ChatScreen(
 
                                                 if (msg.status == "failed" || msg.text.startsWith("⚠️")) {
                                                     Spacer(modifier = Modifier.height(10.dp))
-                                                    Surface(
-                                                        color = Color(0x30EF4444),
-                                                        shape = RoundedCornerShape(10.dp),
-                                                        border = BorderStroke(1.dp, Color(0x80EF4444))
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .clip(RoundedCornerShape(12.dp))
+                                                            .background(
+                                                                Brush.linearGradient(
+                                                                    listOf(Color(0xFF2A0A0A), Color(0xFF1A0606))
+                                                                )
+                                                            )
+                                                            .border(
+                                                                BorderStroke(
+                                                                    1.dp,
+                                                                    Brush.linearGradient(
+                                                                        listOf(Color(0xFFF87171), Color(0xFFDC2626))
+                                                                    )
+                                                                ),
+                                                                RoundedCornerShape(12.dp)
+                                                            )
+                                                            .padding(horizontal = 12.dp, vertical = 8.dp)
                                                     ) {
-                                                        Row(
-                                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                        ) {
-                                                            if (isFilterError) {
-                                                                Text("⚠️ İçerik filtresi nedeniyle yanıt engellendi", color = AppColors.ErrorRedSoft, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                                                Button(
-                                                                    onClick = { viewModel.retryWithSoftenedPrompt(bot.id) },
-                                                                    colors = ButtonDefaults.buttonColors(containerColor = AppColors.PurpleDark),
-                                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                                                    modifier = Modifier.height(26.dp)
+                                                        if (isFilterError) {
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                                modifier = Modifier.fillMaxWidth()
+                                                            ) {
+                                                                Row(
+                                                                    verticalAlignment = Alignment.CenterVertically,
+                                                                    modifier = Modifier.weight(1f)
                                                                 ) {
-                                                                    Text("🛡️ Farklı Şekilde Dene", color = Color.White, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                                                    Text("⚠️", fontSize = 13.sp)
+                                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                                    Text(
+                                                                        "İçerik filtresi engelledi",
+                                                                        color = Color(0xFFFCA5A5),
+                                                                        fontSize = 11.sp,
+                                                                        fontWeight = FontWeight.Bold
+                                                                    )
                                                                 }
-                                                            } else {
-                                                                Text("⚠️ Mesaj iletilemedi", color = AppColors.ErrorRedSoft, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                                                Button(
-                                                                    onClick = { onRetryMessage?.invoke(msg.id) },
-                                                                    colors = ButtonDefaults.buttonColors(containerColor = AppColors.Hex_DC2626),
-                                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                                                    modifier = Modifier.height(26.dp)
+                                                                val filterBtnInteraction = remember { MutableInteractionSource() }
+                                                                val filterBtnPressed by filterBtnInteraction.collectIsPressedAsState()
+                                                                val filterBtnScale by animateFloatAsState(
+                                                                    targetValue = if (filterBtnPressed) 0.92f else 1f,
+                                                                    animationSpec = tween(80),
+                                                                    label = "fbs"
+                                                                )
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .graphicsLayer { scaleX = filterBtnScale; scaleY = filterBtnScale }
+                                                                        .clip(RoundedCornerShape(10.dp))
+                                                                        .background(
+                                                                            Brush.linearGradient(
+                                                                                listOf(Color(0xFF6D28D9), Color(0xFF4C1D95))
+                                                                            )
+                                                                        )
+                                                                        .border(1.dp, Color(0xFFA855F7), RoundedCornerShape(10.dp))
+                                                                        .clickable(
+                                                                            interactionSource = filterBtnInteraction,
+                                                                            indication = null
+                                                                        ) { viewModel.retryWithSoftenedPrompt(bot.id) }
+                                                                        .padding(horizontal = 10.dp, vertical = 5.dp)
                                                                 ) {
-                                                                    Text("🔄 Tekrar Dene", color = Color.White, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                                                    Text(
+                                                                        "🛡️ Farklı Dene",
+                                                                        color = Color.White,
+                                                                        fontSize = 10.5.sp,
+                                                                        fontWeight = FontWeight.ExtraBold
+                                                                    )
+                                                                }
+                                                            }
+                                                        } else {
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                                modifier = Modifier.fillMaxWidth()
+                                                            ) {
+                                                                Row(
+                                                                    verticalAlignment = Alignment.CenterVertically,
+                                                                    modifier = Modifier.weight(1f)
+                                                                ) {
+                                                                    Text("⚠️", fontSize = 13.sp)
+                                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                                    Text(
+                                                                        "Mesaj iletilemedi",
+                                                                        color = Color(0xFFFCA5A5),
+                                                                        fontSize = 11.sp,
+                                                                        fontWeight = FontWeight.Bold
+                                                                    )
+                                                                }
+                                                                val retryBtnInteraction = remember { MutableInteractionSource() }
+                                                                val retryBtnPressed by retryBtnInteraction.collectIsPressedAsState()
+                                                                val retryBtnScale by animateFloatAsState(
+                                                                    targetValue = if (retryBtnPressed) 0.92f else 1f,
+                                                                    animationSpec = tween(80),
+                                                                    label = "rbs"
+                                                                )
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .graphicsLayer { scaleX = retryBtnScale; scaleY = retryBtnScale }
+                                                                        .clip(RoundedCornerShape(10.dp))
+                                                                        .background(
+                                                                            Brush.linearGradient(
+                                                                                listOf(Color(0xFFDC2626), Color(0xFF991B1B))
+                                                                            )
+                                                                        )
+                                                                        .border(1.dp, Color(0xFFF87171), RoundedCornerShape(10.dp))
+                                                                        .clickable(
+                                                                            interactionSource = retryBtnInteraction,
+                                                                            indication = null
+                                                                        ) { onRetryMessage?.invoke(msg.id) }
+                                                                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                                                                ) {
+                                                                    Text(
+                                                                        "🔄 Tekrar Dene",
+                                                                        color = Color.White,
+                                                                        fontSize = 10.5.sp,
+                                                                        fontWeight = FontWeight.ExtraBold
+                                                                    )
                                                                 }
                                                             }
                                                         }
@@ -1434,171 +2097,165 @@ fun ChatScreen(
 
                                         Spacer(modifier = Modifier.height(8.dp))
 
-                                         // Message Action Pills Row matching screenshot
+                                         // AI Message Action Pills
                                         Row(
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(7.dp),
                                             modifier = Modifier
                                                 .horizontalScroll(rememberScrollState())
-                                                .padding(vertical = 2.dp)
+                                                .padding(vertical = 3.dp)
                                         ) {
-                                            val pillBorder = BorderStroke(
-                                                width = 1.dp,
-                                                brush = Brush.linearGradient(
-                                                    colors = listOf(
-                                                        Color(0x90C084FC),
-                                                        Color(0x306B21A8)
-                                                    )
+                                            @Composable
+                                            fun AiActionPill(
+                                                label: String,
+                                                emoji: String,
+                                                enabled: Boolean = true,
+                                                isDanger: Boolean = false,
+                                                onClick: () -> Unit
+                                            ) {
+                                                val aiPillInteraction = remember { MutableInteractionSource() }
+                                                val aiPillPressed by aiPillInteraction.collectIsPressedAsState()
+                                                val aiPillScale by animateFloatAsState(
+                                                    targetValue = if (aiPillPressed) 0.93f else 1f,
+                                                    animationSpec = tween(80),
+                                                    label = "aiPillScale"
                                                 )
-                                            )
-                                            val pillBg = Color(0x90140A28)
-
-                                            // 1. Regenerate Pill
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(14.dp))
-                                                    .background(pillBg)
-                                                    .border(pillBorder, RoundedCornerShape(14.dp))
-                                                    .clickable(enabled = !isSending) { onRegenerate() }
-                                                    .padding(horizontal = 11.dp, vertical = 6.dp)
-                                            ) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text("🔄", fontSize = 11.sp)
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Yeniden Oluştur", color = AppColors.TextLight, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                                Box(
+                                                    modifier = Modifier
+                                                        .graphicsLayer { scaleX = aiPillScale; scaleY = aiPillScale; alpha = if (enabled) 1f else 0.45f }
+                                                        .clip(RoundedCornerShape(12.dp))
+                                                        .background(
+                                                            if (isDanger) Brush.linearGradient(
+                                                                listOf(Color(0xFF2A0A0A), Color(0xFF1A0606))
+                                                            ) else Brush.linearGradient(
+                                                                listOf(Color(0xFF190E35), Color(0xFF100825))
+                                                            )
+                                                        )
+                                                        .border(
+                                                            BorderStroke(
+                                                                1.dp,
+                                                                if (isDanger) Brush.linearGradient(
+                                                                    listOf(Color(0xFFF87171), Color(0xFFDC2626))
+                                                                ) else Brush.linearGradient(
+                                                                    listOf(Color(0x90C084FC), Color(0x406B21A8))
+                                                                )
+                                                            ),
+                                                            RoundedCornerShape(12.dp)
+                                                        )
+                                                        .clickable(
+                                                            enabled = enabled,
+                                                            interactionSource = aiPillInteraction,
+                                                            indication = null,
+                                                            onClick = onClick
+                                                        )
+                                                        .padding(horizontal = 11.dp, vertical = 6.dp)
+                                                ) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                    ) {
+                                                        if (emoji.isNotEmpty()) Text(emoji, fontSize = 11.sp)
+                                                        Text(
+                                                            label,
+                                                            color = if (isDanger) Color(0xFFFCA5A5) else AppColors.TextLight,
+                                                            fontSize = 11.5.sp,
+                                                            fontWeight = FontWeight.SemiBold
+                                                        )
+                                                    }
                                                 }
                                             }
 
-                                            // 2. Continue Story Pill
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(14.dp))
-                                                    .background(pillBg)
-                                                    .border(pillBorder, RoundedCornerShape(14.dp))
-                                                    .clickable(enabled = !isSending) {
-                                                        onSendMessage("Devam et, hikayeye kaldığın yerden devam et.")
-                                                    }
-                                                    .padding(horizontal = 11.dp, vertical = 6.dp)
-                                            ) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text("▶️", fontSize = 11.sp)
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Devam Ettir", color = AppColors.TextLight, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                                                }
+                                            AiActionPill("Yeniden Oluştur", "🔄", enabled = !isSending) { onRegenerate() }
+                                            AiActionPill("Devam Ettir", "▶️", enabled = !isSending) {
+                                                onSendMessage("Devam et, hikayeye kaldığın yerden devam et.")
                                             }
-
-                                            // 3. Read Aloud Pill
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(14.dp))
-                                                    .background(pillBg)
-                                                    .border(pillBorder, RoundedCornerShape(14.dp))
-                                                    .clickable {
-                                                        if (isSpeaking) onStopSpeaking() else onSpeakText?.invoke(msg.text)
-                                                    }
-                                                    .padding(horizontal = 11.dp, vertical = 6.dp)
+                                            AiActionPill(
+                                                if (isSpeaking) "Durdur" else "Sesli Oku",
+                                                if (isSpeaking) "⏹️" else "🎙️"
                                             ) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text(if (isSpeaking) "⏹️" else "🎙️", fontSize = 11.sp)
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text(
-                                                        if (isSpeaking) "Durdur" else "Sesli Oku",
-                                                        color = AppColors.TextLight,
-                                                        fontSize = 11.5.sp,
-                                                        fontWeight = FontWeight.SemiBold
-                                                    )
-                                                }
+                                                if (isSpeaking) onStopSpeaking() else onSpeakText?.invoke(msg.text)
                                             }
-
-                                            // 4. Copy Pill
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(14.dp))
-                                                    .background(pillBg)
-                                                    .border(pillBorder, RoundedCornerShape(14.dp))
-                                                    .clickable {
-                                                        val cleanText = cleanCopyText(msg.text)
-                                                        clipboardManager.setText(AnnotatedString(cleanText))
-                                                        android.widget.Toast.makeText(context, "Kopyalandı", android.widget.Toast.LENGTH_SHORT).show()
-                                                    }
-                                                    .padding(horizontal = 11.dp, vertical = 6.dp)
+                                            AiActionPill(if (msg.isStarred) "Yıldızı Kaldır" else "Yıldızla", if (msg.isStarred) "⭐" else "☆") {
+                                                viewModel.toggleMessageStar(msg.id)
+                                            }
+                                            // Reaction button
+                                            val hasReaction = msg.reaction.isNotEmpty()
+                                            AiActionPill(
+                                                if (hasReaction) msg.reaction else "Reaksiyon",
+                                                if (hasReaction) "" else "😊"
                                             ) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text("📋", fontSize = 11.sp)
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Kopyala", color = AppColors.TextLight, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                                                }
+                                                reactionPickerMessageId = if (reactionPickerMessageId == msg.id) null else msg.id
                                             }
-
-                                            // 5. Rewind Pill ("⏪ Buradan Devam Et")
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(14.dp))
-                                                    .background(pillBg)
-                                                    .border(pillBorder, RoundedCornerShape(14.dp))
-                                                    .clickable {
-                                                        rewindTargetMessageId = msg.id
-                                                    }
-                                                    .padding(horizontal = 11.dp, vertical = 6.dp)
-                                            ) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text("⏪", fontSize = 11.sp)
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Buradan Devam Et", color = AppColors.TextLight, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                                                }
+                                            AiActionPill("Kopyala", "📋") {
+                                                val cleanText = cleanCopyText(msg.text)
+                                                clipboardManager.setText(AnnotatedString(cleanText))
+                                                android.widget.Toast.makeText(context, "Kopyalandı", android.widget.Toast.LENGTH_SHORT).show()
                                             }
-
-                                            // 6. More Actions Pill (•••)
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(14.dp))
-                                                    .background(pillBg)
-                                                    .border(pillBorder, RoundedCornerShape(14.dp))
-                                                    .clickable {
-                                                        expandedMenuMessageId = if (expandedMenuMessageId == msg.id) null else msg.id
-                                                    }
-                                                    .padding(horizontal = 13.dp, vertical = 6.dp)
-                                            ) {
-                                                Text("•••", color = AppColors.TextLight, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                            AiActionPill("Devam Et", "⏪") { rewindTargetMessageId = msg.id }
+                                            AiActionPill("•••", "") {
+                                                expandedMenuMessageId = if (expandedMenuMessageId == msg.id) null else msg.id
                                             }
-
-                                            // Expanded items (Edit / Delete) when ••• is toggled
                                             if (expandedMenuMessageId == msg.id) {
-                                                // Edit Pill
-                                                Box(
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(12.dp))
-                                                        .background(AppColors.CardDarkViolet)
-                                                        .border(1.dp, Color(0x508B5CF6), RoundedCornerShape(12.dp))
-                                                        .clickable {
-                                                            editingMessageId = msg.id
-                                                            editingText = msg.text
-                                                            expandedMenuMessageId = null
-                                                        }
-                                                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                                                ) {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Text("✏️", fontSize = 11.sp)
-                                                        Spacer(modifier = Modifier.width(4.dp))
-                                                        Text("Düzenle", color = AppColors.TextSecondary, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                                                    }
+                                                AiActionPill("Düzenle", "✏️") {
+                                                    editingMessageId = msg.id
+                                                    editingText = msg.text
+                                                    expandedMenuMessageId = null
                                                 }
+                                                AiActionPill("Sil", "🗑️", isDanger = true) {
+                                                    expandedMenuMessageId = null
+                                                    onDeleteMessage(msg.id)
+                                                }
+                                            }
+                                        }
+                                    }
 
-                                                // Delete Pill
-                                                Box(
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(12.dp))
-                                                        .background(AppColors.CardDarkViolet)
-                                                        .border(1.dp, Color(0x508B5CF6), RoundedCornerShape(12.dp))
-                                                        .clickable {
-                                                            expandedMenuMessageId = null
-                                                            onDeleteMessage(msg.id)
-                                                        }
-                                                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                                                ) {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Text("🗑️", fontSize = 11.sp)
-                                                        Spacer(modifier = Modifier.width(4.dp))
-                                                        Text("Sil", color = AppColors.TextSecondary, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                    // 😊 Reaction Picker Popup
+                                    androidx.compose.animation.AnimatedVisibility(
+                                        visible = reactionPickerMessageId == msg.id,
+                                        enter = androidx.compose.animation.fadeIn(tween(150)) +
+                                            androidx.compose.animation.scaleIn(tween(150), transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f)),
+                                        exit = androidx.compose.animation.fadeOut(tween(100)) +
+                                            androidx.compose.animation.scaleOut(tween(100), transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f))
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .padding(start = 42.dp, top = 4.dp, bottom = 4.dp)
+                                                .clip(RoundedCornerShape(20.dp))
+                                                .background(Brush.linearGradient(listOf(Color(0xFF1E0D40), Color(0xFF130828))))
+                                                .border(1.2.dp, Brush.linearGradient(listOf(Color(0xFF9333EA), Color(0xFF6D28D9), Color(0xFF9333EA))), RoundedCornerShape(20.dp))
+                                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                                        ) {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                reactionEmojis.forEach { emoji ->
+                                                    val isSelected = msg.reaction == emoji
+                                                    val emojiInteraction = remember { MutableInteractionSource() }
+                                                    val emojiPressed by emojiInteraction.collectIsPressedAsState()
+                                                    val emojiScale by animateFloatAsState(
+                                                        targetValue = when {
+                                                            isSelected -> 1.25f
+                                                            emojiPressed -> 0.85f
+                                                            else -> 1f
+                                                        },
+                                                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                                                        label = "emojiScale_$emoji"
+                                                    )
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(36.dp)
+                                                            .graphicsLayer { scaleX = emojiScale; scaleY = emojiScale }
+                                                            .clip(CircleShape)
+                                                            .background(
+                                                                if (isSelected)
+                                                                    Brush.radialGradient(listOf(Color(0xFF9333EA), Color(0xFF4C1D95)))
+                                                                else
+                                                                    Brush.radialGradient(listOf(Color(0x30A855F7), Color(0x10000000)))
+                                                            )
+                                                            .clickable(interactionSource = emojiInteraction, indication = null) {
+                                                                viewModel.setMessageReaction(msg.id, if (isSelected) "" else emoji)
+                                                                reactionPickerMessageId = null
+                                                            },
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Text(emoji, fontSize = 18.sp)
                                                     }
                                                 }
                                             }
@@ -1611,40 +2268,61 @@ fun ChatScreen(
 
                     if (isSending) {
                         item(key = "typing_dots_indicator") {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.Start,
-                                verticalAlignment = Alignment.CenterVertically
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = true,
+                                enter = androidx.compose.animation.fadeIn(tween(300)) +
+                                    androidx.compose.animation.slideInVertically(tween(300)) { it / 2 },
+                                exit  = androidx.compose.animation.fadeOut(tween(200))
                             ) {
-                                Box(
+                                Row(
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(20.dp))
-                                        .background(AppColors.Hex_0F0B21)
-                                        .border(1.dp, AppColors.PurpleAccent, RoundedCornerShape(20.dp))
-                                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                                        .fillMaxWidth()
+                                        .padding(end = 64.dp),
+                                    horizontalArrangement = Arrangement.Start,
+                                    verticalAlignment = Alignment.Bottom
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (bot.avatarUrl.isNotBlank()) {
-                                            coil.compose.AsyncImage(
-                                                model = bot.avatarUrl,
-                                                contentDescription = displayName,
-                                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                                modifier = Modifier
-                                                    .size(24.dp)
-                                                    .clip(CircleShape)
-                                            )
-                                        } else {
-                                            OrbView(hue = hue, size = 24.dp)
-                                        }
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        TypingDots(dotColor = AppColors.PrimaryViolet)
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "$displayName düşünüyor...",
-                                            color = AppColors.TextMuted,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Medium
+                                    // AI avatar — small
+                                    Box(
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .clip(CircleShape)
+                                            .background(EmochiGradients.chatBubbleAi)
+                                            .border(
+                                                BorderStroke(1.dp, Brush.sweepGradient(EmochiGradients.avatarBorderSweep)),
+                                                CircleShape
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        com.example.ui.components.BotAvatarImage(
+                                            avatarUrl = bot.avatarUrl.takeIf { it.isNotBlank() },
+                                            contentDescription = displayName,
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                            fallback = { OrbView(hue = hue, size = 26.dp) }
                                         )
+                                    }
+
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    // Bubble
+                                    val typingShape = RoundedCornerShape(topStart = 4.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 18.dp)
+                                    Box(
+                                        modifier = Modifier
+                                            .border(BorderStroke(1.dp, EmochiGradients.chatBubbleAiBorder), typingShape)
+                                            .clip(typingShape)
+                                            .background(EmochiGradients.chatBubbleAi)
+                                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            TypingDots()
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Text(
+                                                text = "$displayName yazıyor",
+                                                color = AppColors.TextMuted.copy(alpha = 0.75f),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1684,13 +2362,21 @@ fun ChatScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .clip(CircleShape)
+                            .clip(RoundedCornerShape(24.dp))
                             .background(
                                 Brush.linearGradient(
-                                    colors = listOf(AppColors.PurpleDark, AppColors.PurpleDeep)
+                                    listOf(Color(0xFF9333EA), Color(0xFF6D28D9), Color(0xFF4C1D95))
                                 )
                             )
-                            .border(1.dp, AppColors.PurpleSoft, CircleShape)
+                            .border(
+                                BorderStroke(
+                                    1.5.dp,
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFFE9D5FF), Color(0xFFA855F7), Color(0xFFC084FC))
+                                    )
+                                ),
+                                RoundedCornerShape(24.dp)
+                            )
                             .clickable {
                                 coroutineScope.launch {
                                     if (totalCount > 0) {
@@ -1698,21 +2384,24 @@ fun ChatScreen(
                                     }
                                 }
                             }
-                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                            .padding(horizontal = 16.dp, vertical = 9.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.KeyboardArrowDown,
                                 contentDescription = "En aşağı in",
                                 tint = Color.White,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(17.dp)
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = "En Aşağı İn",
                                 color = Color.White,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.3.sp
                             )
                         }
                     }
@@ -1850,10 +2539,16 @@ fun ChatScreen(
                 }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { rewindTargetMessageId = null }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Brush.linearGradient(listOf(Color(0xFF130C2A), Color(0xFF0E0820))))
+                        .border(0.8.dp, Color(0x50A855F7), RoundedCornerShape(10.dp))
+                        .clickable { rewindTargetMessageId = null }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text("İptal", color = AppColors.TextSecondary)
+                    Text("İptal", color = AppColors.TextSecondary, fontWeight = FontWeight.Medium)
                 }
             }
         )
@@ -1871,6 +2566,248 @@ fun ChatScreen(
             onDeleteBot = onDeleteBot,
             onCloneBot = onCloneBot
         )
+    }
+
+    // 🏆 Milestone Overlay
+    AnimatedVisibility(
+        visible = activeMilestone != null,
+        enter = fadeIn(tween(400)) + scaleIn(tween(400, easing = FastOutSlowInEasing), initialScale = 0.7f),
+        exit = fadeOut(tween(500)) + scaleOut(tween(300), targetScale = 0.8f)
+    ) {
+        val milestone = activeMilestone ?: return@AnimatedVisibility
+        val infinite = rememberInfiniteTransition(label = "milestoneGlow")
+        val glowAlpha by infinite.animateFloat(0.4f, 1f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "mg")
+        val particleProgress by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(2000, easing = LinearEasing)), label = "mp")
+
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            // Semi-transparent backdrop
+            Box(modifier = Modifier.fillMaxSize().background(Color(0x99000000)).clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { activeMilestone = null })
+
+            // Confetti canvas
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val colors = listOf(Color(0xFFF59E0B), Color(0xFFA855F7), Color(0xFF34D399), Color(0xFFF472B6), Color(0xFF60A5FA))
+                repeat(30) { i ->
+                    val hue = (i * 37f) % 360f
+                    val x = size.width * ((i * 0.13f + particleProgress * 0.7f) % 1f)
+                    val y = size.height * ((i * 0.17f + particleProgress * 0.4f + i * 0.03f) % 1f)
+                    val r = 4f + (i % 5) * 2f
+                    drawCircle(color = colors[i % colors.size].copy(alpha = 0.7f), radius = r, center = Offset(x, y))
+                }
+            }
+
+            // Card
+            Column(
+                modifier = Modifier.padding(40.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFF1F0D4A), Color(0xFF0D0820))))
+                    .border(BorderStroke(1.5.dp, Brush.linearGradient(listOf(Color(0xFFF59E0B), Color(0xFFD97706)))), RoundedCornerShape(24.dp))
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(milestone.emoji, fontSize = 52.sp, modifier = Modifier.graphicsLayer { alpha = glowAlpha })
+                Text("Yeni Kilometre Taşı!", color = Color(0xFFF59E0B), fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Text(milestone.title, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Text("Sevgi: ${milestone.affectionAtTime} · Güven: ${milestone.trustAtTime}", color = Color(0xFFCDA8FF), fontSize = 12.sp)
+                Box(
+                    modifier = Modifier.clip(RoundedCornerShape(20.dp))
+                        .background(Brush.linearGradient(listOf(Color(0xFFF59E0B), Color(0xFFD97706))))
+                        .clickable { activeMilestone = null }
+                        .padding(horizontal = 24.dp, vertical = 10.dp)
+                ) { Text("Harika! ✨", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
+            }
+        }
+    }
+
+    // ⭐ Starred Messages BottomSheet — Premium redesign
+    if (showStarredSheet) {
+        LaunchedEffect(showStarredSheet) { viewModel.loadStarredMessages() }
+        androidx.compose.material3.ModalBottomSheet(
+            onDismissRequest = { showStarredSheet = false },
+            containerColor = Color(0xFF080614),
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            tonalElevation = 0.dp,
+            dragHandle = {
+                Box(modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .width(40.dp).height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Brush.linearGradient(listOf(Color(0xFF9333EA), Color(0xFF6D28D9))))
+                    )
+                }
+            }
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 40.dp)) {
+                // Premium header
+                Box(
+                    modifier = Modifier.fillMaxWidth()
+                        .background(Brush.verticalGradient(listOf(Color(0xFF1A0D3A), Color(0xFF0D0820))))
+                        .padding(horizontal = 20.dp, vertical = 14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Box(
+                                modifier = Modifier.size(36.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Brush.radialGradient(listOf(Color(0xFFF59E0B), Color(0xFFD97706)))),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("⭐", fontSize = 18.sp)
+                            }
+                            Column {
+                                Text(
+                                    "Yıldızlanan Mesajlar",
+                                    color = Color.White,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = (-0.3).sp
+                                )
+                                Text(
+                                    "${starredMessages.size} mesaj kaydedildi",
+                                    color = Color(0x80CDA8FF),
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                        // Close button
+                        val closeInteraction = remember { MutableInteractionSource() }
+                        val closePressed by closeInteraction.collectIsPressedAsState()
+                        val closeScale by animateFloatAsState(if (closePressed) 0.88f else 1f, tween(80), label = "cs")
+                        Box(
+                            modifier = Modifier
+                                .graphicsLayer { scaleX = closeScale; scaleY = closeScale }
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Brush.linearGradient(listOf(Color(0xFF2A0A0A), Color(0xFF1A0606))))
+                                .border(1.dp, Brush.linearGradient(listOf(Color(0xFFF87171), Color(0xFFDC2626))), RoundedCornerShape(10.dp))
+                                .clickable(interactionSource = closeInteraction, indication = null) { showStarredSheet = false },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Close, null, tint = Color(0xFFF87171), modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+                // Gradient separator
+                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(
+                    Brush.horizontalGradient(listOf(Color.Transparent, Color(0x60F59E0B), Color(0x60A855F7), Color.Transparent))
+                ))
+
+                if (starredMessages.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Box(
+                                modifier = Modifier.size(72.dp)
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(Brush.radialGradient(listOf(Color(0x30F59E0B), Color(0x10D97706)))),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("⭐", fontSize = 32.sp)
+                            }
+                            Text("Henüz yıldızlanan mesaj yok", color = Color(0x80CDA8FF), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            Text("Mesajlara uzun basarak yıldızlayabilirsin", color = Color(0x50CDA8FF), fontSize = 12.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(starredMessages, key = { it.id }) { starred ->
+                            val isAi = starred.role == "assistant"
+                            val cardInteraction = remember { MutableInteractionSource() }
+                            val cardPressed by cardInteraction.collectIsPressedAsState()
+                            val cardScale by animateFloatAsState(if (cardPressed) 0.97f else 1f, tween(80), label = "cardScale")
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .graphicsLayer { scaleX = cardScale; scaleY = cardScale }
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Brush.linearGradient(
+                                        if (isAi)
+                                            listOf(Color(0xFF140D2E), Color(0xFF0C0820))
+                                        else
+                                            listOf(Color(0xFF220A45), Color(0xFF150630))
+                                    ))
+                                    .border(
+                                        1.2.dp,
+                                        Brush.linearGradient(listOf(Color(0xFFF59E0B), Color(0xFFD97706), Color(0xFFF59E0B))),
+                                        RoundedCornerShape(16.dp)
+                                    )
+                                    .clickable(interactionSource = cardInteraction, indication = null) {}
+                                    .padding(14.dp)
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    // Header row
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Box(
+                                                modifier = Modifier.size(22.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (isAi)
+                                                        Brush.radialGradient(listOf(Color(0xFF7C3AED), Color(0xFF4C1D95)))
+                                                    else
+                                                        Brush.radialGradient(listOf(Color(0xFF9333EA), Color(0xFF6D28D9)))),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(if (isAi) "🤖" else "👤", fontSize = 10.sp)
+                                            }
+                                            Text(
+                                                if (isAi) bot.aiName else (bot.userCharName.ifBlank { "Sen" }),
+                                                color = Color(0xFFF59E0B),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        Text("⭐", fontSize = 12.sp)
+                                    }
+                                    // Gradient divider
+                                    Box(modifier = Modifier.fillMaxWidth().height(0.8.dp).background(
+                                        Brush.horizontalGradient(listOf(Color.Transparent, Color(0x40F59E0B), Color.Transparent))
+                                    ))
+                                    // Message text
+                                    Text(
+                                        starred.text.take(220) + if (starred.text.length > 220) "…" else "",
+                                        color = Color(0xFFE8DEFF),
+                                        fontSize = 13.sp,
+                                        lineHeight = 20.sp
+                                    )
+                                    // Unstar button
+                                    val unstarInteraction = remember { MutableInteractionSource() }
+                                    val unstarPressed by unstarInteraction.collectIsPressedAsState()
+                                    val unstarScale by animateFloatAsState(if (unstarPressed) 0.93f else 1f, tween(80), label = "us")
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                        Box(
+                                            modifier = Modifier
+                                                .graphicsLayer { scaleX = unstarScale; scaleY = unstarScale }
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(Brush.linearGradient(listOf(Color(0xFF2A1500), Color(0xFF1A0E00))))
+                                                .border(0.8.dp, Brush.linearGradient(listOf(Color(0xFFF59E0B), Color(0xFFD97706))), RoundedCornerShape(8.dp))
+                                                .clickable(interactionSource = unstarInteraction, indication = null) {
+                                                    viewModel.toggleMessageStar(starred.id)
+                                                }
+                                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("☆ Yıldızı Kaldır", color = Color(0xFFF59E0B), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (showQuickProfile) {
@@ -1967,8 +2904,6 @@ fun ChapterSummaryModal(
     var stepPhase by remember { mutableStateOf(StepPhase.CARD_ONLY) }
     var isClosing by remember { mutableStateOf(false) }
 
-    var mediaPlayer by remember { mutableStateOf<android.media.MediaPlayer?>(null) }
-
     val completedChapterNumber = remember(messages) {
         val lastAssistant = messages.lastOrNull { it.role == "assistant" || it.role == "model" }
         val txt = lastAssistant?.text ?: ""
@@ -1979,81 +2914,29 @@ fun ChapterSummaryModal(
         }
     }
 
-    // Audio Fade-out helper (100% -> 0% in ~1.5s)
+    // BookAudioController — modal açılırken zaten çalıyor olabilir, çift başlatma yok
+    LaunchedEffect(Unit) {
+        if (!com.example.util.BookAudioController.isPlaying) {
+            com.example.util.BookAudioController.play(context, com.example.R.raw.bolumsonu, loop = true, volume = 0.85f)
+        }
+    }
+
+    // Fade-out helper — BookAudioController stop() fadeOut içeriyor
     val safeExitWithFade = remember {
         { action: () -> Unit ->
             if (!isClosing) {
                 isClosing = true
                 coroutineScope.launch {
-                    mediaPlayer?.let { player ->
-                        try {
-                            for (i in 100 downTo 0) {
-                                val vol = i / 100f
-                                if (player.isPlaying) {
-                                    player.setVolume(vol, vol)
-                                }
-                                delay(15) // ~1.5s total fade out
-                            }
-                            if (player.isPlaying) player.stop()
-                            player.release()
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
-                    }
-                    mediaPlayer = null
+                    com.example.util.BookAudioController.stop(fadeOutMs = 1500)
+                    delay(1600)
                     action()
                 }
             }
         }
     }
 
-    // Audio Fade-in effect (0% -> 100% in ~1.5s)
     DisposableEffect(Unit) {
-        var player: android.media.MediaPlayer? = null
-        try {
-            val afd = context.resources.openRawResourceFd(com.example.R.raw.bolumsonu)
-            if (afd != null) {
-                val p = android.media.MediaPlayer()
-                p.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                afd.close()
-                p.setAudioAttributes(
-                    android.media.AudioAttributes.Builder()
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                        .build()
-                )
-                p.isLooping = true
-                p.prepare()
-                p.setVolume(0.1f, 0.1f)
-                p.start()
-                player = p
-                mediaPlayer = p
-
-                // Rapid Fade-In: 0% -> 100%
-                coroutineScope.launch {
-                    for (i in 10..100) {
-                        val vol = i / 100f
-                        try {
-                            if (p.isPlaying) p.setVolume(vol, vol)
-                        } catch (e: Exception) { e.printStackTrace() }
-                        delay(15)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        onDispose {
-            try {
-                player?.let { p ->
-                    if (p.isPlaying) p.stop()
-                    p.release()
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
+        onDispose { /* BookAudioController global — burada release etme */ }
     }
 
     val userMsgs = remember(messages) { messages.filter { it.role == "user" } }
@@ -2730,8 +3613,14 @@ fun ChapterSummaryModal(
 
                                         Spacer(modifier = Modifier.height(32.dp))
 
-                                        TextButton(
-                                            onClick = { viewMode = SummaryViewMode.FINAL_GRID }
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(Brush.linearGradient(listOf(Color(0xFF1E0D3A), Color(0xFF130828))))
+                                                .border(0.8.dp, Brush.linearGradient(listOf(Color(0xFF9333EA), Color(0xFF6D28D9))), RoundedCornerShape(10.dp))
+                                                .clickable { viewMode = SummaryViewMode.FINAL_GRID }
+                                                .padding(horizontal = 14.dp, vertical = 7.dp),
+                                            contentAlignment = Alignment.Center
                                         ) {
                                             Text(
                                                 text = "⚡ Tümünü Göster / Atla",
@@ -3473,65 +4362,15 @@ fun BookReaderView(
     }
     var lastProcessedMsgCount by rememberSaveable { mutableIntStateOf(0) }
 
-    var isAmbientMusicPlaying by remember { mutableStateOf(false) }
-    var ambientMediaPlayer by remember { mutableStateOf<android.media.MediaPlayer?>(null) }
+    // BookAudioController ile müzik yönetimi — race condition yok
+    val isAmbientMusicPlaying by remember { derivedStateOf { com.example.util.BookAudioController.isPlaying } }
 
     fun toggleAmbientMusic() {
-        if (isAmbientMusicPlaying) {
-            try {
-                ambientMediaPlayer?.let { p ->
-                    if (p.isPlaying) p.stop()
-                    p.release()
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("BookReaderView", "Error stopping player on toggle off", e)
-            }
-            ambientMediaPlayer = null
-            isAmbientMusicPlaying = false
-        } else {
-            try {
-                ambientMediaPlayer?.let { p ->
-                    if (p.isPlaying) p.stop()
-                    p.release()
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("BookReaderView", "Error releasing old player on toggle on", e)
-            }
-            ambientMediaPlayer = null
-
-            try {
-                val p = android.media.MediaPlayer.create(context, com.example.R.raw.bolumsonu)
-                if (p != null) {
-                    p.setOnErrorListener { _, what, extra ->
-                        android.util.Log.e("BookReaderView", "bolumsonu.mp3 toggle error: what=$what, extra=$extra")
-                        true
-                    }
-                    p.isLooping = true
-                    p.setVolume(0.85f, 0.85f)
-                    p.start()
-                    ambientMediaPlayer = p
-                    isAmbientMusicPlaying = true
-                } else {
-                    android.util.Log.e("BookReaderView", "MediaPlayer.create returned null during toggleAmbientMusic")
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("BookReaderView", "Exception in toggleAmbientMusic", e)
-            }
-        }
+        com.example.util.BookAudioController.toggle(context, com.example.R.raw.bolumsonu)
     }
 
     DisposableEffect(Unit) {
-        onDispose {
-            try {
-                ambientMediaPlayer?.let { p ->
-                    if (p.isPlaying) p.stop()
-                    p.release()
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("BookReaderView", "Error releasing ambient player on dispose", e)
-            }
-            ambientMediaPlayer = null
-        }
+        onDispose { com.example.util.BookAudioController.release() }
     }
 
     LaunchedEffect(messages.size, isSending) {
@@ -3558,37 +4397,10 @@ fun BookReaderView(
         (txt.contains("BÖLÜM") && txt.contains("SONU"))
     }
 
+    // Bölüm tamamlandığında müziği başlat — BookAudioController ile tekli player garantisi
     LaunchedEffect(isChapterCompleted) {
-        if (isChapterCompleted) {
-            try {
-                ambientMediaPlayer?.let { p ->
-                    if (p.isPlaying) p.stop()
-                    p.release()
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("BookReaderView", "Error releasing previous MediaPlayer on chapter end", e)
-            }
-            ambientMediaPlayer = null
-
-            try {
-                val player = android.media.MediaPlayer.create(context, com.example.R.raw.bolumsonu)
-                if (player != null) {
-                    player.setOnErrorListener { _, what, extra ->
-                        android.util.Log.e("BookReaderView", "bolumsonu.mp3 chapter-end error: what=$what, extra=$extra")
-                        true
-                    }
-                    player.isLooping = true
-                    player.setVolume(0.85f, 0.85f)
-                    player.start()
-                    ambientMediaPlayer = player
-                    isAmbientMusicPlaying = true
-                    android.util.Log.d("BookReaderView", "bolumsonu.mp3 playing successfully on chapter completed!")
-                } else {
-                    android.util.Log.e("BookReaderView", "MediaPlayer.create returned null for bolumsonu.mp3 on chapter completed")
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("BookReaderView", "Exception starting chapter end music", e)
-            }
+        if (isChapterCompleted && !com.example.util.BookAudioController.isPlaying) {
+            com.example.util.BookAudioController.play(context, com.example.R.raw.bolumsonu, loop = true, volume = 0.85f)
         }
     }
 
@@ -3630,6 +4442,13 @@ fun BookReaderView(
         )
     }
 
+    // Bölüm sonu sinematik overlay state
+    var showChapterEndOverlay by remember { mutableStateOf(false) }
+    LaunchedEffect(isChapterCompleted) {
+        if (isChapterCompleted) showChapterEndOverlay = true
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -3637,348 +4456,343 @@ fun BookReaderView(
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-        // TOP BOOK NAVIGATION BAR
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(AppColors.Hex_141527)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(AppColors.CardNavy)
-                ) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Kitaplıktan Çık", tint = Color.White, modifier = Modifier.size(20.dp))
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column {
-                    Text(
-                        text = bot.aiName.ifBlank { "Kozmik Sürükleniş" },
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "📖 İnteraktif Roman Okuyucu",
-                        color = AppColors.PrimaryPurple,
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(AppColors.CardNavy)
-                        .clickable {
-                            fontSizeSp = when (fontSizeSp) {
-                                14.sp -> 16.sp
-                                16.sp -> 18.sp
-                                18.sp -> 20.sp
-                                else -> 14.sp
-                            }
-                        }
-                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = "A ${fontSizeSp.value.toInt()}pt",
-                        color = AppColors.PurpleSoft,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                IconButton(
-                    onClick = { toggleAmbientMusic() },
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (isAmbientMusicPlaying) AppColors.Hex_3B1233 else AppColors.CardNavy)
-                ) {
-                    Text(
-                        text = if (isAmbientMusicPlaying) "🎵" else "🔇",
-                        fontSize = 16.sp
-                    )
-                }
-
-                IconButton(
-                    onClick = { onResetChat(true) },
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(AppColors.Hex_2D162C)
-                ) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Baştan Başla", tint = AppColors.CoralBright, modifier = Modifier.size(18.dp))
-                }
+        // ── TOP BOOK NAVIGATION BAR — Premium Glassmorphic ──────────────
+        val chapterNum = remember(messages) {
+            val txt = messages.lastOrNull { it.role == "assistant" || it.role == "model" }?.text ?: ""
+            when {
+                txt.contains("BÖLÜM 3") -> 3
+                txt.contains("BÖLÜM 2") -> 2
+                else -> 1
             }
         }
+        val musicPulse = rememberInfiniteTransition(label = "musicPulse")
+        val musicGlow by musicPulse.animateFloat(0.4f, 1f,
+            infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "mg")
 
-        errorMessage?.let { err ->
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Brush.linearGradient(listOf(Color(0xFF0A0818), Color(0xFF1A0D3A))))
+        ) {
+            // Subtle bottom separator
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).align(Alignment.BottomCenter)
+                .background(Brush.linearGradient(listOf(Color.Transparent, Color(0x60A78BFA), Color.Transparent))))
+
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(AppColors.CardWine)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(err, color = AppColors.CoralBright, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                IconButton(onClick = onClearError, modifier = Modifier.size(24.dp)) {
-                    Icon(Icons.Default.Close, contentDescription = "Kapat", tint = AppColors.CoralBright, modifier = Modifier.size(16.dp))
+                // Left: back + title
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    val backScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                    val backScope = rememberCoroutineScope()
+                    Box(
+                        modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp))
+                            .background(Brush.linearGradient(listOf(Color(0xFF1A1035), Color(0xFF0D0820))))
+                            .border(1.dp, Brush.linearGradient(listOf(Color(0xFF6D28D9), Color(0xFF4C1D95))), RoundedCornerShape(10.dp))
+                            .graphicsLayer { scaleX = backScale.value; scaleY = backScale.value }
+                            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                                backScope.launch {
+                                    backScale.animateTo(0.88f, tween(80))
+                                    backScale.animateTo(1f, tween(120))
+                                }
+                                onBack()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    // Book icon container
+                    Box(
+                        modifier = Modifier.size(34.dp).clip(RoundedCornerShape(8.dp))
+                            .background(Brush.radialGradient(listOf(Color(0xFF7C3AED), Color(0xFF4C1D95)))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("📖", fontSize = 16.sp)
+                    }
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = bot.aiName.ifBlank { "Kozmik Sürükleniş" },
+                            color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("İnteraktif Roman", color = Color(0xFF9F7AEA), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Box(modifier = Modifier.size(3.dp).clip(CircleShape).background(Color(0xFF6D28D9)))
+                            Text("Bölüm $chapterNum / 3", color = Color(0xFFCDA8FF), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                // Right: font size controls + music + reset
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Font size A- A+
+                    Row(
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF1A1035))
+                            .border(1.dp, Color(0xFF2D1F50), RoundedCornerShape(8.dp))
+                    ) {
+                        Box(modifier = Modifier.clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                            fontSizeSp = if (fontSizeSp.value > 14f) (fontSizeSp.value - 2f).sp else 14.sp
+                        }.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                            Text("A⁻", color = Color(0xFF9F7AEA), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Box(modifier = Modifier.width(1.dp).height(20.dp).background(Color(0xFF2D1F50)).align(Alignment.CenterVertically))
+                        Box(modifier = Modifier.clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                            fontSizeSp = if (fontSizeSp.value < 22f) (fontSizeSp.value + 2f).sp else 22.sp
+                        }.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                            Text("A⁺", color = Color(0xFF9F7AEA), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    // Music toggle
+                    val musicScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                    val musicScope = rememberCoroutineScope()
+                    Box(
+                        modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp))
+                            .background(if (isAmbientMusicPlaying) Color(0xFF2D0F40) else Color(0xFF1A1035))
+                            .border(1.dp,
+                                if (isAmbientMusicPlaying) Color(0xFFD946EF).copy(alpha = musicGlow) else Color(0xFF2D1F50),
+                                RoundedCornerShape(8.dp))
+                            .graphicsLayer { scaleX = musicScale.value; scaleY = musicScale.value }
+                            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                                musicScope.launch {
+                                    musicScale.animateTo(0.85f, tween(80))
+                                    musicScale.animateTo(1f, tween(120))
+                                }
+                                toggleAmbientMusic()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(if (isAmbientMusicPlaying) "🎵" else "🔇", fontSize = 15.sp)
+                    }
+
+                    // Reset
+                    val resetScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                    val resetScope = rememberCoroutineScope()
+                    Box(
+                        modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF1A0A0A))
+                            .border(1.dp, Color(0xFF7F1D1D).copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                            .graphicsLayer { scaleX = resetScale.value; scaleY = resetScale.value }
+                            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                                resetScope.launch {
+                                    resetScale.animateTo(0.85f, tween(80))
+                                    resetScale.animateTo(1f, tween(120))
+                                }
+                                onResetChat(true)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, tint = Color(0xFFF87171), modifier = Modifier.size(17.dp))
+                    }
                 }
             }
         }
 
-        // NOVEL CANVAS BODY
+        // Error banner
+        errorMessage?.let { err ->
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .background(Brush.linearGradient(listOf(Color(0xFF2D0A0A), Color(0xFF1A0808))))
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("⚠️ $err", color = Color(0xFFFCA5A5), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                Box(modifier = Modifier.size(24.dp).clip(CircleShape)
+                    .background(Color(0xFF3D1010))
+                    .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { onClearError() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = null, tint = Color(0xFFFCA5A5), modifier = Modifier.size(14.dp))
+                }
+            }
+        }
+
+        // ── NOVEL CANVAS BODY ────────────────────────────────────────────
+        val novelInfinite = rememberInfiniteTransition(label = "novelBg")
+        val novelDrift by novelInfinite.animateFloat(0f, 1f,
+            infiniteRepeatable(tween(18000, easing = LinearEasing)), label = "nd")
+
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 6.dp)
-                .border(1.dp, Color(0x30A78BFA), RoundedCornerShape(16.dp))
-                .clip(RoundedCornerShape(16.dp))
-                .background(AppColors.Hex_10111D)
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .border(1.dp, Brush.linearGradient(listOf(Color(0x40A78BFA), Color(0x206D28D9), Color(0x40A78BFA))), RoundedCornerShape(18.dp))
         ) {
+            // Canlı nebula arka plan
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawRect(Color(0xFF0A0A18))
+                // 3 yavaş nebula blob
+                val blobs = listOf(
+                    Triple(0.2f, 0.3f, Color(0xFF1A0A2E)),
+                    Triple(0.7f, 0.6f, Color(0xFF0D1A2E)),
+                    Triple(0.5f, 0.85f, Color(0xFF1A0D2E))
+                )
+                blobs.forEachIndexed { i, (bx, by, col) ->
+                    val cx = size.width * (bx + kotlin.math.sin(novelDrift * 2 * Math.PI.toFloat() + i) * 0.05f)
+                    val cy = size.height * (by + kotlin.math.cos(novelDrift * 2 * Math.PI.toFloat() + i * 1.3f) * 0.04f)
+                    drawCircle(color = col.copy(alpha = 0.6f), radius = size.minDimension * 0.4f, center = Offset(cx, cy),
+                        blendMode = BlendMode.Screen)
+                }
+                // Üst ve alt vignette
+                drawRect(Brush.verticalGradient(listOf(Color(0xFF050510), Color.Transparent, Color.Transparent, Color(0xFF050510))))
+            }
+
             if (messages.isEmpty() && !isSending) {
+                // Empty state
                 Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
+                    modifier = Modifier.fillMaxSize().padding(28.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Icon(Icons.Default.MenuBook, contentDescription = null, tint = AppColors.PrimaryPurple, modifier = Modifier.size(56.dp))
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "📖 Kitap Sayfası Hazırlanıyor",
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Box(modifier = Modifier.size(72.dp).clip(RoundedCornerShape(20.dp))
+                        .background(Brush.radialGradient(listOf(Color(0xFF4C1D95), Color(0xFF1A0D3A)))),
+                        contentAlignment = Alignment.Center) {
+                        Text("📖", fontSize = 32.sp)
+                    }
+                    Spacer(modifier = Modifier.height(18.dp))
+                    Text("Kitap Sayfası Hazırlanıyor", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Bölüm 1 metnini yüklemek için aşağıdaki butona dokunun.",
-                        color = AppColors.TextMuted,
-                        fontSize = 13.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(20.dp))
-                    Button(
-                        onClick = onEnsureOpeningMessage,
-                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.DeepPurple),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("📖 Bölüm 1'i Başlat", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("Bölüm 1 metnini başlatmak için dokunun.", color = Color(0xFF9F7AEA), fontSize = 13.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    Spacer(modifier = Modifier.height(22.dp))
+                    val startScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                    val startScope = rememberCoroutineScope()
+                    Box(modifier = Modifier.clip(RoundedCornerShape(14.dp))
+                        .background(Brush.linearGradient(listOf(Color(0xFF7C3AED), Color(0xFF4C1D95))))
+                        .graphicsLayer { scaleX = startScale.value; scaleY = startScale.value }
+                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                            startScope.launch { startScale.animateTo(0.93f, tween(80)); startScale.animateTo(1f, tween(120)) }
+                            onEnsureOpeningMessage()
+                        }.padding(horizontal = 24.dp, vertical = 12.dp)) {
+                        Text("📖 Bölüm 1'i Başlat", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
                     }
                 }
             } else {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    itemsIndexed(messages, key = { _, msg -> msg.id }) { _, msg ->
-                        if (msg.role == "user") {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .animateContentSize()
-                                    .padding(vertical = 4.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = AppColors.Hex_1A1731),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x80F59E0B)),
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.fillMaxWidth(0.95f)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically
+                    itemsIndexed(messages, key = { _, msg -> msg.id }) { idx, msg ->
+                        // Aşamalı fade-in
+                        val visible = remember { androidx.compose.animation.core.MutableTransitionState(false).apply { targetState = true } }
+                        AnimatedVisibility(visibleState = visible,
+                            enter = fadeIn(tween(350, delayMillis = minOf(idx * 40, 300))) +
+                                    slideInVertically(tween(350, delayMillis = minOf(idx * 40, 300))) { it / 3 }
+                        ) {
+                            if (msg.role == "user") {
+                                // ── Kullanıcı seçim kartı ──
+                                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
+                                    Box(modifier = Modifier.fillMaxWidth(0.95f).clip(RoundedCornerShape(14.dp))
+                                        .background(Brush.linearGradient(listOf(Color(0xFF1A1218), Color(0xFF120D1A))))
+                                        .border(1.dp, Brush.linearGradient(listOf(Color(0xFFF59E0B), Color(0xFFD97706))), RoundedCornerShape(14.dp))
+                                        .padding(horizontal = 14.dp, vertical = 12.dp)
                                     ) {
-                                        Text(text = "✦", color = AppColors.WarningAmber, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Column {
-                                            Text(
-                                                text = "VERİLEN KARAR / SEÇİM:",
-                                                color = AppColors.WarningAmber,
-                                                fontSize = 10.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                letterSpacing = 0.5.sp
-                                            )
-                                            Text(
-                                                text = msg.text.replace(Regex("^(1️⃣|2️⃣|3️⃣|4️⃣|\\d+[\\.\\)]|[-•*])\\s*"), ""),
-                                                color = AppColors.YellowLight,
-                                                fontSize = (fontSizeSp.value - 1f).sp,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(modifier = Modifier.size(30.dp).clip(CircleShape)
+                                                .background(Brush.radialGradient(listOf(Color(0xFFF59E0B), Color(0xFF92400E)))),
+                                                contentAlignment = Alignment.Center) {
+                                                Text("✦", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Column {
+                                                Text("VERİLEN KARAR", color = Color(0xFFF59E0B), fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+                                                Text(
+                                                    text = msg.text.replace(Regex("^(1️⃣|2️⃣|3️⃣|4️⃣|\\d+[\\.\\)]|[-•*])\\s*"), ""),
+                                                    color = Color(0xFFFDE68A), fontSize = (fontSizeSp.value - 1f).sp,
+                                                    fontWeight = FontWeight.SemiBold, lineHeight = (fontSizeSp.value * 1.4f).sp
+                                                )
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        } else {
-                            val msgChoices = parseBookChoiceOptions(msg.text)
-                            val rawChoiceLines = msgChoices.map { it.rawLine.trim() }.toSet()
-                            val paragraphs = msg.text.split("\n\n")
+                            } else {
+                                // ── AI hikaye metni ──
+                                val msgChoices = parseBookChoiceOptions(msg.text)
+                                val rawChoiceLines = msgChoices.map { it.rawLine.trim() }.toSet()
+                                val paragraphs = msg.text.split("\n\n")
+                                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    paragraphs.forEach { paragraph ->
+                                        val trimmed = paragraph.trim()
+                                        val lines = trimmed.lines().map { it.trim() }
+                                        val isChoiceBlock = lines.all { line ->
+                                            line.isBlank() || rawChoiceLines.contains(line) || line.startsWith("🔀") ||
+                                            line.startsWith("---") || line.matches(Regex("^(1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|6️⃣|\\d+[\\.\\)]|[-•*])\\s*.*"))
+                                        }
+                                        if (isChoiceBlock && msgChoices.isNotEmpty()) return@forEach
+                                        if (trimmed.isBlank()) return@forEach
 
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .animateContentSize(),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                paragraphs.forEach { paragraph ->
-                                    val trimmed = paragraph.trim()
-                                    val lines = trimmed.lines().map { it.trim() }
-                                    // Hide paragraph if it consists purely of choice options or choice prompt header
-                                    val isChoiceBlock = lines.all { line ->
-                                        line.isBlank() || rawChoiceLines.contains(line) || line.startsWith("🔀") || line.startsWith("---") || line.matches(Regex("^(1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|6️⃣|\\d+[\\.\\)]|[-•*])\\s*.*"))
-                                    }
-                                    if (isChoiceBlock && msgChoices.isNotEmpty()) {
-                                        return@forEach
-                                    }
-
-                                    if (trimmed.startsWith("#") || trimmed.startsWith("📖 BÖLÜM")) {
-                                        Text(
-                                            text = trimmed.replace("#", "").trim(),
-                                            color = AppColors.PurpleLight,
-                                            fontSize = (fontSizeSp.value + 4f).sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            lineHeight = (fontSizeSp.value * 1.6f).sp,
-                                            modifier = Modifier.padding(vertical = 8.dp)
-                                        )
-                                    } else if (trimmed.startsWith("---")) {
-                                        HorizontalDivider(color = Color(0x40A78BFA), thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
-                                    } else {
-                                        Text(
-                                            text = trimmed,
-                                            color = AppColors.TextLight,
-                                            fontSize = fontSizeSp,
-                                            lineHeight = (fontSizeSp.value * 1.55f).sp,
-                                            fontWeight = FontWeight.Normal
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (isSending) {
-                        item(key = "sending_book_progress") {
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = AppColors.Hex_18152E),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, AppColors.PrimaryPurple),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .animateContentSize()
-                                    .padding(vertical = 8.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    CircularProgressIndicator(
-                                        color = AppColors.PrimaryPurple,
-                                        modifier = Modifier.size(18.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Text(
-                                        text = "📖 Kararın hikayeye işleniyor, sonraki sayfa yazılıyor...",
-                                        color = AppColors.PurpleSoft,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    if (activeChoices.isNotEmpty() && !isSending) {
-                        item(key = "interactive_choices_section") {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = AppColors.Hex_18162B),
-                                border = androidx.compose.foundation.BorderStroke(1.5.dp, Brush.linearGradient(listOf(AppColors.PrimaryPurple, AppColors.Blue))),
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .animateContentSize()
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("🔀", fontSize = 16.sp)
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "SENİN KARARIN (SEÇİM NOKTASI):",
-                                            color = AppColors.PrimaryPurple,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            letterSpacing = 0.5.sp
-                                        )
-                                    }
-
-                                    activeChoices.forEach { choice ->
-                                        Card(
-                                            colors = CardDefaults.cardColors(containerColor = AppColors.Hex_252140),
-                                            border = androidx.compose.foundation.BorderStroke(1.dp, AppColors.DeepPurple),
-                                            shape = RoundedCornerShape(12.dp),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .clickable {
-                                                    onSendMessage(choice.rawLine)
+                                        when {
+                                            // Bölüm tamamlandı başlığı
+                                            trimmed.contains("BÖLÜM") && (trimmed.contains("TAMAMLANDI") || trimmed.contains("SONU")) -> {
+                                                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                                    contentAlignment = Alignment.Center) {
+                                                    Text(trimmed.replace("#", "").trim(),
+                                                        color = Color(0xFF34D399), fontSize = (fontSizeSp.value + 5f).sp,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                                        lineHeight = (fontSizeSp.value * 1.5f).sp)
                                                 }
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(14.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(28.dp)
-                                                        .clip(CircleShape)
-                                                        .background(AppColors.CardPurpleDeep),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text("✦", color = AppColors.PurpleSoft, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                            // Bölüm başlığı
+                                            trimmed.startsWith("#") || (trimmed.startsWith("📖") && trimmed.contains("BÖLÜM")) -> {
+                                                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+                                                    Box(modifier = Modifier.fillMaxWidth().height(1.dp)
+                                                        .background(Brush.linearGradient(listOf(Color.Transparent, Color(0x80A78BFA), Color.Transparent))))
+                                                    Spacer(modifier = Modifier.height(8.dp))
+                                                    Text(trimmed.replace("#", "").trim(),
+                                                        color = Color(0xFFC4B5FD), fontSize = (fontSizeSp.value + 5f).sp,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                                        lineHeight = (fontSizeSp.value * 1.5f).sp)
+                                                    Spacer(modifier = Modifier.height(8.dp))
+                                                    Box(modifier = Modifier.fillMaxWidth().height(1.dp)
+                                                        .background(Brush.linearGradient(listOf(Color.Transparent, Color(0x80A78BFA), Color.Transparent))))
                                                 }
-                                                Spacer(modifier = Modifier.width(12.dp))
-                                                Text(
-                                                    text = choice.text,
-                                                    color = Color.White,
-                                                    fontSize = (fontSizeSp.value - 0.5f).sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                                Icon(
-                                                    Icons.Default.ChevronRight,
-                                                    contentDescription = null,
-                                                    tint = AppColors.PrimaryPurple,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
+                                            }
+                                            // Scene break
+                                            trimmed == "---" || trimmed == "---\n---" -> {
+                                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                                    horizontalArrangement = Arrangement.Center,
+                                                    verticalAlignment = Alignment.CenterVertically) {
+                                                    repeat(3) {
+                                                        Box(modifier = Modifier.size(4.dp).clip(CircleShape)
+                                                            .background(Color(0xFF6D28D9).copy(alpha = 0.7f)))
+                                                        if (it < 2) Spacer(modifier = Modifier.width(8.dp))
+                                                    }
+                                                }
+                                            }
+                                            // Diyalog (tırnak ile başlıyorsa)
+                                            trimmed.startsWith("\"") || trimmed.startsWith("*") || trimmed.startsWith("_") -> {
+                                                Row(modifier = Modifier.fillMaxWidth()) {
+                                                    Box(modifier = Modifier.width(2.dp).fillMaxHeight()
+                                                        .background(Color(0xFF7C3AED).copy(alpha = 0.5f)))
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    Text(trimmed.removePrefix("*").removeSuffix("*").trim(),
+                                                        color = Color(0xFFE2D9F3), fontSize = fontSizeSp,
+                                                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                                        lineHeight = (fontSizeSp.value * 1.6f).sp)
+                                                }
+                                            }
+                                            // Normal paragraf
+                                            else -> {
+                                                Text(trimmed, color = Color(0xFFD4C8E8), fontSize = fontSizeSp,
+                                                    lineHeight = (fontSizeSp.value * 1.65f).sp,
+                                                    fontWeight = FontWeight.Normal)
                                             }
                                         }
                                     }
@@ -3987,42 +4801,150 @@ fun BookReaderView(
                         }
                     }
 
+                    // Sayfa yazılıyor — canvas animasyonu
+                    if (isSending) {
+                        item(key = "sending_book_progress") {
+                            val pageInfinite = rememberInfiniteTransition(label = "pageFlip")
+                            val pageRot by pageInfinite.animateFloat(-12f, 12f,
+                                infiniteRepeatable(tween(600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pr")
+                            val dotAlpha1 by pageInfinite.animateFloat(0.2f, 1f,
+                                infiniteRepeatable(tween(500, 0), RepeatMode.Reverse), label = "d1")
+                            val dotAlpha2 by pageInfinite.animateFloat(0.2f, 1f,
+                                infiniteRepeatable(tween(500, 170), RepeatMode.Reverse), label = "d2")
+                            val dotAlpha3 by pageInfinite.animateFloat(0.2f, 1f,
+                                infiniteRepeatable(tween(500, 340), RepeatMode.Reverse), label = "d3")
+
+                            Box(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp).clip(RoundedCornerShape(14.dp))
+                                .background(Brush.linearGradient(listOf(Color(0xFF0F0D20), Color(0xFF1A1535))))
+                                .border(1.dp, Color(0x50A78BFA), RoundedCornerShape(14.dp))
+                                .padding(18.dp), contentAlignment = Alignment.Center) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                                    // Dönen sayfa ikonu
+                                    Canvas(modifier = Modifier.size(32.dp).graphicsLayer { rotationY = pageRot }) {
+                                        drawRoundRect(Color(0xFF4C1D95), cornerRadius = androidx.compose.ui.geometry.CornerRadius(6f),
+                                            size = size * 0.85f, topLeft = Offset(size.width * 0.075f, size.height * 0.075f))
+                                        drawLine(Color(0xFF9F7AEA).copy(alpha = 0.6f),
+                                            Offset(size.width * 0.25f, size.height * 0.35f),
+                                            Offset(size.width * 0.75f, size.height * 0.35f), strokeWidth = 1.5f)
+                                        drawLine(Color(0xFF9F7AEA).copy(alpha = 0.4f),
+                                            Offset(size.width * 0.25f, size.height * 0.5f),
+                                            Offset(size.width * 0.75f, size.height * 0.5f), strokeWidth = 1.2f)
+                                        drawLine(Color(0xFF9F7AEA).copy(alpha = 0.3f),
+                                            Offset(size.width * 0.25f, size.height * 0.65f),
+                                            Offset(size.width * 0.6f, size.height * 0.65f), strokeWidth = 1f)
+                                    }
+                                    Column {
+                                        Text("Kararın işleniyor...", color = Color(0xFFCDA8FF), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            listOf(dotAlpha1, dotAlpha2, dotAlpha3).forEach { alpha ->
+                                                Box(modifier = Modifier.size(5.dp).clip(CircleShape)
+                                                    .background(Color(0xFF7C3AED).copy(alpha = alpha)))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Seçim kartları — animasyonlu premium
+                    if (activeChoices.isNotEmpty() && !isSending) {
+                        item(key = "interactive_choices_section") {
+                            val choiceInfinite = rememberInfiniteTransition(label = "choicePulse")
+                            val choiceBorderAlpha by choiceInfinite.animateFloat(0.5f, 1f,
+                                infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "cb")
+
+                            Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(18.dp))
+                                .background(Brush.linearGradient(listOf(Color(0xFF0F0D1F), Color(0xFF17122E))))
+                                .border(1.5.dp, Brush.linearGradient(listOf(
+                                    Color(0xFF7C3AED).copy(alpha = choiceBorderAlpha),
+                                    Color(0xFF4F46E5).copy(alpha = choiceBorderAlpha)
+                                )), RoundedCornerShape(18.dp))
+                                .padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Box(modifier = Modifier.size(28.dp).clip(CircleShape)
+                                        .background(Brush.radialGradient(listOf(Color(0xFF7C3AED), Color(0xFF4C1D95)))),
+                                        contentAlignment = Alignment.Center) {
+                                        Text("🔀", fontSize = 12.sp)
+                                    }
+                                    Text("SENİN KARARIN", color = Color(0xFFA78BFA), fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    Spacer(modifier = Modifier.weight(1f))
+                                    Box(modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF1A1035))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)) {
+                                        Text("${activeChoices.size} seçenek", color = Color(0xFF7C3AED), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+
+                                activeChoices.forEachIndexed { choiceIdx, choice ->
+                                    val choiceScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                                    val choiceScope = rememberCoroutineScope()
+                                    val emoji = listOf("1️⃣", "2️⃣", "3️⃣", "4️⃣")[choiceIdx.coerceAtMost(3)]
+
+                                    Box(modifier = Modifier.fillMaxWidth().graphicsLayer { scaleX = choiceScale.value; scaleY = choiceScale.value }
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Brush.linearGradient(listOf(Color(0xFF1A1530), Color(0xFF110D25))))
+                                        .border(1.dp, Brush.linearGradient(listOf(Color(0xFF4C1D95), Color(0xFF2D1F50))), RoundedCornerShape(12.dp))
+                                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                                            choiceScope.launch {
+                                                choiceScale.animateTo(0.95f, tween(80))
+                                                choiceScale.animateTo(1f, tween(150))
+                                            }
+                                            onSendMessage(choice.rawLine)
+                                        }.padding(14.dp)
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(emoji, fontSize = 18.sp)
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Text(choice.text, color = Color(0xFFEDE9FE), fontSize = (fontSizeSp.value - 0.5f).sp,
+                                                fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f),
+                                                lineHeight = (fontSizeSp.value * 1.4f).sp)
+                                            Icon(Icons.Default.ChevronRight, contentDescription = null,
+                                                tint = Color(0xFF7C3AED), modifier = Modifier.size(18.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Bölüm sonu — premium card (overlay ayrıca açılıyor)
                     if (isChapterCompleted && !isSending) {
                         item(key = "chapter_end_card") {
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = AppColors.Hex_24162F),
-                                border = androidx.compose.foundation.BorderStroke(1.5.dp, AppColors.Emerald),
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .animateContentSize()
-                                    .padding(vertical = 12.dp)
+                            val chapterEndScale = remember { androidx.compose.animation.core.Animatable(0.85f) }
+                            LaunchedEffect(Unit) { chapterEndScale.animateTo(1f, tween(400, easing = FastOutSlowInEasing)) }
+                            val endInfinite = rememberInfiniteTransition(label = "chEnd")
+                            val endGlow by endInfinite.animateFloat(0.5f, 1f, infiniteRepeatable(tween(1000), RepeatMode.Reverse), label = "eg")
+
+                            Box(modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp)
+                                .graphicsLayer { scaleX = chapterEndScale.value; scaleY = chapterEndScale.value }
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Brush.linearGradient(listOf(Color(0xFF0A2010), Color(0xFF0D1A0D))))
+                                .border(1.5.dp, Brush.linearGradient(listOf(
+                                    Color(0xFF34D399).copy(alpha = endGlow),
+                                    Color(0xFF10B981).copy(alpha = endGlow)
+                                )), RoundedCornerShape(20.dp))
+                                .padding(20.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier.padding(18.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text(completedChapterTitle, color = AppColors.MintGreen, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = completedChapterDesc,
-                                        color = AppColors.TextLight,
-                                        fontSize = 13.5.sp,
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                    )
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    Button(
-                                        onClick = { showSummaryModal = true },
-                                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.Emerald),
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.Center,
-                                            modifier = Modifier.padding(vertical = 4.dp)
-                                        ) {
-                                            Text("✨ BÖLÜMÜ BİTİR VE SEÇİM ÖZETİNİ GÖR", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 13.5.sp)
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text(completedChapterTitle, color = Color(0xFF6EE7B7), fontSize = 18.sp, fontWeight = FontWeight.ExtraBold,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                                    Text(completedChapterDesc, color = Color(0xFFD1FAE5), fontSize = 13.sp,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center, lineHeight = 19.sp)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    val summaryBtnScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                                    val summaryScope = rememberCoroutineScope()
+                                    Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                                        .background(Brush.linearGradient(listOf(Color(0xFF059669), Color(0xFF047857))))
+                                        .graphicsLayer { scaleX = summaryBtnScale.value; scaleY = summaryBtnScale.value }
+                                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                                            summaryScope.launch { summaryBtnScale.animateTo(0.95f, tween(80)); summaryBtnScale.animateTo(1f, tween(120)) }
+                                            showSummaryModal = true
+                                        }.padding(vertical = 13.dp), contentAlignment = Alignment.Center) {
+                                        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                            Text("✨ SEÇİM ÖZETİNİ GÖR", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                                         }
@@ -4034,7 +4956,154 @@ fun BookReaderView(
                 }
             }
         }
+    } // end Column
+
+    // ── SİNEMATİK BÖLÜM SONU OVERLAY ────────────────────────────────
+    AnimatedVisibility(
+        visible = showChapterEndOverlay,
+        enter = fadeIn(tween(500)),
+        exit = fadeOut(tween(400))
+    ) {
+        val confettiColors = listOf(
+            Color(0xFF7C3AED), Color(0xFFA78BFA), Color(0xFF34D399),
+            Color(0xFFFBBF24), Color(0xFFF472B6), Color(0xFF60A5FA),
+            Color(0xFFE879F9), Color(0xFF4ADE80)
+        )
+        data class ConfettiParticle(val x: Float, val y: Float, val vx: Float, val vy: Float,
+            val size: Float, val rotation: Float, val vr: Float, val color: Color, val shape: Int)
+
+        val overlayInfinite = rememberInfiniteTransition(label = "overlayAnim")
+        val overlayTick by overlayInfinite.animateFloat(0f, 1f,
+            infiniteRepeatable(tween(50, easing = LinearEasing)), label = "ot")
+
+        val particles = remember {
+            List(55) {
+                ConfettiParticle(
+                    x = (0..100).random() / 100f,
+                    y = -(0..60).random() / 100f,
+                    vx = ((-3)..3).random() / 300f,
+                    vy = (4..10).random() / 250f,
+                    size = (6..14).random().toFloat(),
+                    rotation = (0..360).random().toFloat(),
+                    vr = ((-5)..5).random().toFloat(),
+                    color = confettiColors.random(),
+                    shape = (0..2).random()
+                )
+            }
+        }
+        val particleStates = remember { particles.map { androidx.compose.animation.core.Animatable(0f) }.toMutableList() }
+        LaunchedEffect(Unit) {
+            particleStates.forEachIndexed { i, anim ->
+                launch { anim.animateTo(1f, tween(3500 + i * 20, easing = LinearEasing)) }
+            }
+        }
+
+        val emojiScale = remember { androidx.compose.animation.core.Animatable(0f) }
+        val cardSlide = remember { androidx.compose.animation.core.Animatable(120f) }
+        LaunchedEffect(Unit) {
+            delay(200)
+            launch { emojiScale.animateTo(1f, tween(500, easing = FastOutSlowInEasing)) }
+            launch { cardSlide.animateTo(0f, tween(450, easing = FastOutSlowInEasing)) }
+        }
+
+        val overlayGlow by overlayInfinite.animateFloat(0.6f, 1f,
+            infiniteRepeatable(tween(1200), RepeatMode.Reverse), label = "og")
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Backdrop
+            Box(modifier = Modifier.fillMaxSize()
+                .background(Brush.radialGradient(listOf(Color(0xCC0A0518), Color(0xEE000005)))))
+
+            // Konfeti canvas
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val t = overlayTick
+                particles.forEachIndexed { i, p ->
+                    val progress = particleStates[i].value
+                    val cx = (p.x + p.vx * progress * 80) * size.width
+                    val cy = (p.y + p.vy * progress * 80) * size.height
+                    if (cy < 0 || cy > size.height || cx < 0 || cx > size.width) return@forEachIndexed
+                    val alpha = if (progress > 0.75f) 1f - (progress - 0.75f) * 4f else 1f
+                    val rot = (p.rotation + p.vr * progress * 800) * (Math.PI / 180).toFloat()
+                    when (p.shape) {
+                        0 -> drawCircle(p.color.copy(alpha = alpha.coerceIn(0f, 1f)), p.size, Offset(cx, cy))
+                        1 -> {
+                            rotate(degrees = rot * 57.3f, pivot = Offset(cx, cy)) {
+                                drawRect(p.color.copy(alpha = alpha.coerceIn(0f, 1f)),
+                                    Offset(cx - p.size / 2, cy - p.size / 4),
+                                    androidx.compose.ui.geometry.Size(p.size, p.size / 2))
+                            }
+                        }
+                        else -> {
+                            rotate(degrees = rot * 57.3f, pivot = Offset(cx, cy)) {
+                                drawLine(p.color.copy(alpha = alpha.coerceIn(0f, 1f)),
+                                    Offset(cx - p.size / 2, cy), Offset(cx + p.size / 2, cy), strokeWidth = 2.5f)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Merkezi kart
+            Box(modifier = Modifier.align(Alignment.Center).fillMaxWidth(0.85f)
+                .graphicsLayer { translationY = cardSlide.value }
+                .clip(RoundedCornerShape(24.dp))
+                .background(Brush.linearGradient(listOf(Color(0xFF0F0A20), Color(0xFF1A1035))))
+                .border(2.dp, Brush.linearGradient(listOf(
+                    Color(0xFF7C3AED).copy(alpha = overlayGlow),
+                    Color(0xFF34D399).copy(alpha = overlayGlow),
+                    Color(0xFF7C3AED).copy(alpha = overlayGlow)
+                )), RoundedCornerShape(24.dp))
+                .padding(28.dp)
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    // Emoji
+                    Box(modifier = Modifier.size(80.dp).graphicsLayer { scaleX = emojiScale.value; scaleY = emojiScale.value }
+                        .clip(CircleShape)
+                        .background(Brush.radialGradient(listOf(Color(0xFF4C1D95), Color(0xFF1A0D3A)))),
+                        contentAlignment = Alignment.Center) {
+                        Text("📖", fontSize = 38.sp)
+                    }
+                    Text(completedChapterTitle, color = Color(0xFF6EE7B7), fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    Text("Tüm kararların kaydedildi. Seçimlerin hikayeni şekillendirdi.",
+                        color = Color(0xFFBBB0D8), fontSize = 13.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center, lineHeight = 19.sp)
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Seçim özeti butonu
+                    val overlayBtn1Scale = remember { androidx.compose.animation.core.Animatable(1f) }
+                    val overlayScope1 = rememberCoroutineScope()
+                    Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                        .background(Brush.linearGradient(listOf(Color(0xFF059669), Color(0xFF047857))))
+                        .graphicsLayer { scaleX = overlayBtn1Scale.value; scaleY = overlayBtn1Scale.value }
+                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                            overlayScope1.launch { overlayBtn1Scale.animateTo(0.94f, tween(80)); overlayBtn1Scale.animateTo(1f, tween(120)) }
+                            showChapterEndOverlay = false
+                            showSummaryModal = true
+                        }.padding(vertical = 13.dp), contentAlignment = Alignment.Center) {
+                        Text("✨ Seçim Özetini Gör", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                    }
+
+                    // Kapat
+                    val overlayBtn2Scale = remember { androidx.compose.animation.core.Animatable(1f) }
+                    val overlayScope2 = rememberCoroutineScope()
+                    Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF1A1035))
+                        .border(1.dp, Color(0xFF3D2D60), RoundedCornerShape(14.dp))
+                        .graphicsLayer { scaleX = overlayBtn2Scale.value; scaleY = overlayBtn2Scale.value }
+                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                            overlayScope2.launch { overlayBtn2Scale.animateTo(0.94f, tween(80)); overlayBtn2Scale.animateTo(1f, tween(120)) }
+                            showChapterEndOverlay = false
+                        }.padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                        Text("Şimdi Değil", color = Color(0xFF9F7AEA), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    }
+                }
+            }
+        }
     }
+
+    } // end outer Box
 }
 
 fun cleanCopyText(rawText: String): String {

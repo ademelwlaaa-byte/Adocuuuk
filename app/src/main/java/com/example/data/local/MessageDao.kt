@@ -36,4 +36,16 @@ interface MessageDao {
 
     @Query("DELETE FROM messages")
     suspend fun deleteAllMessages()
+
+    @Query("SELECT * FROM messages WHERE botId = :botId AND LENGTH(TRIM(text)) > 0 AND text LIKE '%' || :query || '%' ORDER BY timestamp DESC")
+    suspend fun searchMessages(botId: String, query: String): List<MessageEntity>
+
+    @Query("SELECT * FROM messages WHERE botId = :botId AND LENGTH(TRIM(text)) > 0 ORDER BY timestamp ASC LIMIT :limit OFFSET :offset")
+    suspend fun getMessagesPaged(botId: String, limit: Int, offset: Int): List<MessageEntity>
+
+    @Query("SELECT * FROM messages WHERE botId = :botId AND isStarred = 1 AND LENGTH(TRIM(text)) > 0 ORDER BY timestamp DESC")
+    suspend fun getStarredMessages(botId: String): List<MessageEntity>
+
+    @Query("UPDATE messages SET isStarred = :starred WHERE id = :msgId")
+    suspend fun setMessageStarred(msgId: String, starred: Boolean)
 }

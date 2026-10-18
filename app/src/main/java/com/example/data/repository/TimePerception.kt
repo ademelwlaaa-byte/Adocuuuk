@@ -1,106 +1,20 @@
 package com.example.data.repository
 
-import com.example.data.local.BotEntity
-import com.example.data.local.TimePerceptionMismatchLogEntity
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
 /**
- * Enhanced Time Perception Engine (Zaman Algısı Sistemi).
- * Manages physical time intervals, time-of-day / weekday context,
- * story jumps (Turkish NLP), calendar date calculations, and mismatch resolution.
+ * TimePerceptionEngine — Hikâye Takvimi Sistemi.
+ * Gerçek dünya zamanından tamamen bağımsız; zaman yalnızca hikâye atlamalarıyla ilerler.
  */
 object TimePerceptionEngine {
 
-    enum class TimeOfDay(val label: String, val startHour: Int, val endHour: Int) {
-        NIGHT_SLEEP("Gece / Uyku Vakti", 23, 6),
-        MORNING("Sabah", 6, 11),
-        AFTERNOON("Öğle / Gün Ortası", 11, 17),
-        EVENING("Akşam", 17, 23);
-
-        companion object {
-            fun fromHour(hour: Int): TimeOfDay {
-                return when (hour) {
-                    in 6..10 -> MORNING
-                    in 11..16 -> AFTERNOON
-                    in 17..22 -> EVENING
-                    else -> NIGHT_SLEEP
-                }
-            }
-        }
-    }
-
-    enum class DayType(val label: String) {
-        WEEKDAY("Hafta İçi"),
-        WEEKEND("Hafta Sonu");
-
-        companion object {
-            fun fromCalendar(cal: Calendar): DayType {
-                val day = cal.get(Calendar.DAY_OF_WEEK)
-                return if (day == Calendar.SATURDAY || day == Calendar.SUNDAY) WEEKEND else WEEKDAY
-            }
-        }
-    }
-
-    data class TimeContext(
-        val timeOfDay: TimeOfDay,
-        val dayType: DayType,
-        val hour: Int,
-        val isOvernightGap: Boolean
-    )
-
-    data class TimePerceptionInfo(
-        val formattedTimeString: String,
-        val exactFormattedTimeString: String,
-        val timeGapSignificant: Boolean,
-        val rapidMessagingFlag: Boolean,
-        val elapsedMs: Long,
-        val categoryLabel: String,
-        val guidelineInstruction: String,
-        val storyCalendarDate: String,
-        val storyDayCounter: Long = 1L,
-        val currentAge: Int = 20,
-        val shouldInjectIntoPrompt: Boolean = true,
-        val timeContext: TimeContext? = null
-    )
-
-    fun getDeviceCurrentDateString(): String {
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-        sdf.timeZone = TimeZone.getDefault()
-        return sdf.format(Date())
-    }
-
-    fun formatExactTimePassed(lastMs: Long, nowMs: Long): String {
-        if (lastMs <= 0L) return "Sohbet ilk kez başlatılıyor."
-        val diffMs = (nowMs - lastMs).coerceAtLeast(0L)
-        val totalSecs = diffMs / 1000
-        val minutes = (totalSecs / 60) % 60
-        val hours = (totalSecs / 3600) % 24
-        val days = (totalSecs / (3600 * 24))
-        val weeks = days / 7
-        val remDays = days % 7
-
-        val timeParts = mutableListOf<String>()
-        if (weeks > 0) timeParts.add("$weeks hafta")
-        if (remDays > 0) timeParts.add("$remDays gün")
-        if (hours > 0) timeParts.add("$hours saat")
-        if (minutes > 0 || timeParts.isEmpty()) timeParts.add("$minutes dakika")
-
-        val durationStr = timeParts.joinToString(" ")
-
-        val sdf = SimpleDateFormat("d MMMM EEEE, 'saat' HH:mm", Locale("tr", "TR"))
-        sdf.timeZone = TimeZone.getDefault()
-        val lastDateStr = try { sdf.format(Date(lastMs)) } catch (_: Exception) { "" }
-
-        return "Son mesajdan bu yana $durationStr geçti ($lastDateStr)."
-    }
+    private const val MAX_DAYS_PER_JUMP = 3650
 
     data class StoryTimeJumpResult(
         val daysToAdvance: Int = 0,
-        val newSceneTime: String? = null // e.g. "sabah", "öğle", "akşam", "gece"
+        val newSceneTime: String? = null
     )
 
     data class StoryTimeInfo(
@@ -111,104 +25,201 @@ object TimePerceptionEngine {
         val promptBlock: String = ""
     )
 
-    fun parseTurkishNumberWords(text: String): Int? {
-        val numMap = mapOf(
-            "bir" to 1, "iki" to 2, "üç" to 3, "uc" to 3,
-            "dört" to 4, "dort" to 4, "beş" to 5, "bes" to 5,
-            "altı" to 6, "alti" to 6, "yedi" to 7, "sekiz" to 8,
-            "dokuz" to 9, "on" to 10, "on bir" to 11, "on iki" to 12,
-            "yirmi" to 20, "otuz" to 30, "kırk" to 40, "elli" to 50,
-            "birkaç" to 3, "birkac" to 3
-        )
-        val lower = text.lowercase().trim()
-        val digitMatch = Regex("""\b(\d+)\b""").find(lower)?.value?.toIntOrNull()
-        if (digitMatch != null) return digitMatch
+    private val VALID_SCENE_TIMES = setOf("sabah", "öğle", "akşam", "gece")
 
-        for ((word, num) in numMap) {
-            val wordRegex = Regex("""\b${Regex.escape(word)}\b""")
-            if (wordRegex.containsMatchIn(lower)) return num
+    fun validateSceneTime(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        val lower = raw.lowercase(Locale("tr", "TR")).trim()
+        return if (lower in VALID_SCENE_TIMES) lower else null
+    }
+
+    // ---------------------------------------------------------------------------
+    // Türkçe sayı kelime ayrıştırıcı — önce bileşikler, sonra tekli
+    // ---------------------------------------------------------------------------
+
+    private data class NumberResult(val intValue: Int, val isHalf: Boolean = false)
+
+    private fun parseTurkishNumber(text: String): NumberResult? {
+        val lower = text.lowercase(Locale("tr", "TR")).trim()
+        if (lower.isBlank()) return null
+
+        // Rakam ile başlıyorsa doğrudan al
+        val digitMatch = Regex("""\b(\d+)\b""").find(lower)
+        if (digitMatch != null) {
+            val n = digitMatch.groupValues[1].toIntOrNull() ?: return null
+            return NumberResult(n)
+        }
+
+        // "bir buçuk" → 1.5 → 2 (ceil)
+        if (Regex("""\bbir\s+buçuk\b""").containsMatchIn(lower)) return NumberResult(2, isHalf = true)
+        // "yarım" → 0.5 → 0 gün (sadece saat bağlamında)
+        if (Regex("""\byarım\b""").containsMatchIn(lower)) return NumberResult(0, isHalf = true)
+        // "birkaç" → 3
+        if (Regex("""\bbirkaç\b|\bbirkac\b""").containsMatchIn(lower)) return NumberResult(3)
+
+        // Önce bileşik on-lu sayılar (uzundan kısaya eşleştir)
+        val compositeMap = listOf(
+            "yirmi dokuz" to 29, "yirmi sekiz" to 28, "yirmi yedi" to 27,
+            "yirmi altı" to 26, "yirmi beş" to 25, "yirmi dört" to 24,
+            "yirmi üç" to 23, "yirmi iki" to 22, "yirmi bir" to 21,
+            "otuz bir" to 31, "otuz iki" to 32, "otuz" to 30,
+            "yirmi" to 20, "on dokuz" to 19, "on sekiz" to 18,
+            "on yedi" to 17, "on altı" to 16, "on beş" to 15,
+            "on dört" to 14, "on üç" to 13, "on iki" to 12,
+            "on bir" to 11, "kırk beş" to 45, "kırk" to 40,
+            "elli" to 50, "altmış" to 60, "yetmiş" to 70,
+            "seksen" to 80, "doksan" to 90, "yüz" to 100
+        )
+        for ((word, num) in compositeMap) {
+            if (Regex("""\b${Regex.escape(word)}\b""").containsMatchIn(lower)) return NumberResult(num)
+        }
+
+        // Tekli sayılar
+        val singleMap = listOf(
+            "on" to 10, "dokuz" to 9, "sekiz" to 8, "yedi" to 7,
+            "altı" to 6, "alti" to 6, "beş" to 5, "bes" to 5,
+            "dört" to 4, "dort" to 4, "üç" to 3, "uc" to 3,
+            "iki" to 2, "bir" to 1
+        )
+        for ((word, num) in singleMap) {
+            if (Regex("""\b${Regex.escape(word)}\b""").containsMatchIn(lower)) return NumberResult(num)
         }
         return null
     }
 
-    /**
-     * Robust story jump parsing:
-     * - Word boundary safe (e.g. \bay\b instead of contains("ay"))
-     * - Recognizes intra-day jumps ("yarım saat", "birkaç saat", "akşam oldu") -> 0 days + scene_time
-     * - Recognizes full day jumps ("ertesi gün", "ertesi sabah", "3 gün", "bir hafta", "iki ay")
-     */
+    // ---------------------------------------------------------------------------
+    // parseStoryTimeJump — hikâye atlama tespiti
+    // ---------------------------------------------------------------------------
+
     fun parseStoryTimeJump(text: String): StoryTimeJumpResult {
-        val lower = text.lowercase().trim()
+        if (text.isBlank()) return StoryTimeJumpResult()
+
+        // Tırnak içi diyalog ve OOC parantezleri çıkar
+        val stripped = text
+            .replace(Regex(""""[^"]*""""), " ")
+            .replace(Regex("""«[^»]*»"""), " ")
+            .replace(Regex("""\([^)]*\)"""), " ")
+            .replace(Regex("""\[[^\]]*\]"""), " ")
+        val lower = stripped.lowercase(Locale("tr", "TR")).trim()
         if (lower.isBlank()) return StoryTimeJumpResult()
 
-        // 1. Intra-day time changes (days = 0, scene_time updated)
-        if (Regex("""\b(öğle|öğlen|oglen|öğle vakti)\b""").containsMatchIn(lower)) {
-            if (!lower.contains("gün") && !lower.contains("hafta") && !lower.contains("ay")) {
-                return StoryTimeJumpResult(daysToAdvance = 0, newSceneTime = "öğle")
-            }
-        }
-        if (Regex("""\b(akşamüstü|akşama doğru|akşam oldu|aksam oldu|bu akşam|gece oldu|gece yarısı)\b""").containsMatchIn(lower)) {
-            if (!lower.contains("gün") && !lower.contains("hafta") && !lower.contains("ay")) {
-                val scTime = if (lower.contains("gece")) "gece" else "akşam"
-                return StoryTimeJumpResult(daysToAdvance = 0, newSceneTime = scTime)
-            }
-        }
-        if (Regex("""\b(birkaç saat|bir saat|iki saat|üç saat|yarım saat|saatler)\s*(?:sonra|geçti|gecti)\b""").containsMatchIn(lower)) {
-            return StoryTimeJumpResult(daysToAdvance = 0, newSceneTime = null)
+        // --- 1. Kesinlikle ATLAma olmayan söz/plan ifadeler ---
+        // "yarın" tek başına (söz), "haftaya", "gelecek ay/hafta" → ATLA
+        val futurePromisePattern = Regex("""\b(yarın|yarin|haftaya|hafta\s*ya|gelecek\s+(?:ay|hafta|yıl|yil))\b""")
+        if (futurePromisePattern.containsMatchIn(lower) &&
+            !Regex("""\b(?:sonra|geçti|gecti|ardından|aradan)\b""").containsMatchIn(lower)) {
+            return StoryTimeJumpResult()
         }
 
-        // 2. Next morning / Next day (1 day + specific scene_time)
+        // --- 2. Sadece saat bağlamı (gün artmaz, sceneTime güncellenir) ---
+        // "birkaç saat/dakika sonra"
+        val hourMinRegex = Regex(
+            """\b(?:birkaç|birkac|bir|iki|üç|uc|yarım|yarim|\d+)\s+(?:saat|dakika|dk)\s*(?:sonra|geçti|gecti|ardından)\b"""
+        )
+        if (hourMinRegex.containsMatchIn(lower)) {
+            // Scene time tahmini
+            val scene = detectSceneFromContext(lower)
+            return StoryTimeJumpResult(daysToAdvance = 0, newSceneTime = scene)
+        }
+
+        // Sahne geçişi ifadeleri (gün artmaz)
+        val sceneShiftRegex = Regex(
+            """\b(öğle(?:\s+vakti|den)?|oglen|akşamüstü|akşama\s+doğru|akşam\s+oldu|aksam\s+oldu|gece\s+oldu|gece\s+yarısı|sabah\s+oldu)\b"""
+        )
+        val sceneShiftMatch = sceneShiftRegex.find(lower)
+        if (sceneShiftMatch != null &&
+            !Regex("""\b(?:\d+|bir|iki|üç|dört|beş|altı|yedi|sekiz|dokuz|on)\s+(?:gün|hafta|ay|yıl)\b""").containsMatchIn(lower)) {
+            val sceneWord = sceneShiftMatch.value
+            val scene = when {
+                sceneWord.contains("öğle") || sceneWord.contains("oglen") -> "öğle"
+                sceneWord.contains("gece") -> "gece"
+                sceneWord.contains("sabah") -> "sabah"
+                else -> "akşam"
+            }
+            return StoryTimeJumpResult(daysToAdvance = 0, newSceneTime = scene)
+        }
+
+        // --- 3. "ertesi sabah" / "ertesi gün" / "bir sonraki sabah" → 1 gün ---
         if (Regex("""\bertesi\s+sabah\b""").containsMatchIn(lower)) {
             return StoryTimeJumpResult(daysToAdvance = 1, newSceneTime = "sabah")
         }
-        if (Regex("""\b(ertesi\s+gün|ertesi\s+gun|sonraki\s+gün|sonraki\s+gun|yarın|yarin)\b""").containsMatchIn(lower)) {
-            return StoryTimeJumpResult(daysToAdvance = 1, newSceneTime = "sabah")
-        }
-        if (Regex("""\b(birkaç\s+gün|birkac\s+gun)\b""").containsMatchIn(lower)) {
-            return StoryTimeJumpResult(daysToAdvance = 3, newSceneTime = null)
+        if (Regex("""\b(?:ertesi\s+gün|ertesi\s+gun|sonraki\s+gün|sonraki\s+gun|bir\s+sonraki\s+sabah)\b""").containsMatchIn(lower)) {
+            return StoryTimeJumpResult(daysToAdvance = 1, newSceneTime = null)
         }
 
-        // 3. Month jumps (word boundary check on \bay\b)
-        val monthRegex = Regex("""([a-zçğıöşü\d\s]+)\s+\bay\b\s*(?:sonra|geçti|gecti)?""")
-        val monthMatch = monthRegex.find(lower)
-        if (monthMatch != null) {
-            val amountStr = monthMatch.groupValues[1]
-            val months = parseTurkishNumberWords(amountStr) ?: 1
-            return StoryTimeJumpResult(daysToAdvance = months * 30, newSceneTime = null)
-        }
+        // --- 4. Gün atlamaları — kelime sınırlı, önek grubu YOK ---
+        // Pattern: <sayı> <birim> <fiil>
+        // Birimler: gün, hafta, ay, yıl
+        // Fiiller: sonra, geçti, gecti, ardından, sonrasında
 
-        // 4. Week jumps
-        val weekRegex = Regex("""([a-zçğıöşü\d\s]+)\s+\bhafta\b\s*(?:sonra|geçti|gecti)?""")
-        val weekMatch = weekRegex.find(lower)
-        if (weekMatch != null) {
-            val amountStr = weekMatch.groupValues[1]
-            val weeks = parseTurkishNumberWords(amountStr) ?: 1
-            return StoryTimeJumpResult(daysToAdvance = weeks * 7, newSceneTime = null)
-        }
+        val jumpVerb = """(?:sonra|geçti|gecti|ardından|sonrasında)"""
 
-        // 5. Day jumps
-        val dayRegex = Regex("""([a-zçğıöşü\d\s]+)\s+\bgün\b\s*(?:sonra|geçti|gecti)?""")
-        val dayMatch = dayRegex.find(lower)
-        if (dayMatch != null) {
-            val amountStr = dayMatch.groupValues[1]
-            val days = parseTurkishNumberWords(amountStr) ?: 1
+        // Yıl
+        val yearPattern = Regex(
+            """\b((?:\d+|bir\s+buçuk|birkaç|birkac|(?:yirmi\s+\w+|otuz\s+\w+|kırk|elli|on\s+\w+|bir|iki|üç|uc|dört|dort|beş|bes|altı|alti|yedi|sekiz|dokuz|on)(?:\s+\w+)?))\s+yıl\s*$jumpVerb\b"""
+        )
+        yearPattern.find(lower)?.let { m ->
+            val num = parseTurkishNumber(m.groupValues[1]) ?: return@let
+            val days = clamp(num.intValue * 365)
             return StoryTimeJumpResult(daysToAdvance = days, newSceneTime = null)
+        }
+
+        // Ay — \bay\b kelime sınırı zorunlu
+        val monthPattern = Regex(
+            """\b(\d+|bir\s+buçuk|birkaç|birkac|yirmi\s+\w+|otuz\s+\w+|on\s+\w+|bir|iki|üç|uc|dört|dort|beş|bes|altı|alti|yedi|sekiz|dokuz|on)\s+\bay\b\s*(?:$jumpVerb)?\b"""
+        )
+        monthPattern.find(lower)?.let { m ->
+            val num = parseTurkishNumber(m.groupValues[1]) ?: return@let
+            val days = clamp(num.intValue * 30)
+            return StoryTimeJumpResult(daysToAdvance = days, newSceneTime = null)
+        }
+
+        // Hafta
+        val weekPattern = Regex(
+            """\b(\d+|bir\s+buçuk|birkaç|birkac|yirmi\s+\w+|otuz\s+\w+|on\s+\w+|bir|iki|üç|uc|dört|dort|beş|bes|altı|alti|yedi|sekiz|dokuz|on)\s+hafta\s*(?:$jumpVerb)?\b"""
+        )
+        weekPattern.find(lower)?.let { m ->
+            val num = parseTurkishNumber(m.groupValues[1]) ?: return@let
+            val days = if (num.isHalf) clamp((num.intValue + 0.5 * 7).toInt())
+                       else clamp(num.intValue * 7)
+            return StoryTimeJumpResult(daysToAdvance = days, newSceneTime = null)
+        }
+
+        // Gün
+        val dayPattern = Regex(
+            """\b(\d+|birkaç|birkac|yirmi\s+\w+|otuz\s+\w+|on\s+\w+|bir|iki|üç|uc|dört|dort|beş|bes|altı|alti|yedi|sekiz|dokuz|on)\s+gün\s*(?:$jumpVerb)?\b"""
+        )
+        dayPattern.find(lower)?.let { m ->
+            val num = parseTurkishNumber(m.groupValues[1]) ?: return@let
+            if (num.intValue <= 0) return@let
+            val days = clamp(num.intValue)
+            val scene = detectSceneFromContext(lower)
+            return StoryTimeJumpResult(daysToAdvance = days, newSceneTime = scene)
         }
 
         return StoryTimeJumpResult()
     }
 
-    fun parseStoryTimeJumpDays(text: String): Int {
-        return parseStoryTimeJump(text).daysToAdvance
+    private fun detectSceneFromContext(lower: String): String? {
+        return when {
+            lower.contains("sabah") -> "sabah"
+            lower.contains("öğle") || lower.contains("oglen") -> "öğle"
+            lower.contains("akşam") || lower.contains("aksam") -> "akşam"
+            lower.contains("gece") -> "gece"
+            else -> null
+        }
     }
 
-    fun parseDaysToSkip(amountStr: String): Int {
-        val jump = parseStoryTimeJump(amountStr)
-        if (jump.daysToAdvance > 0) return jump.daysToAdvance
-        val lower = amountStr.lowercase().trim()
-        val num = Regex("""\b\d+\b""").find(lower)?.value?.toIntOrNull()
-        return num ?: 0
+    private fun clamp(days: Int): Int {
+        return if (days > MAX_DAYS_PER_JUMP) {
+            android.util.Log.w("TimePerception", "Atlama $days gün → $MAX_DAYS_PER_JUMP ile kırpıldı")
+            MAX_DAYS_PER_JUMP
+        } else days
     }
+
+    // ---------------------------------------------------------------------------
+    // advanceCalendarDateAndCheckAge — Calendar tabanlı, UTC, DAY_OF_YEAR hatası yok
+    // ---------------------------------------------------------------------------
 
     fun advanceCalendarDateAndCheckAge(
         currentCalendarDateStr: String,
@@ -217,42 +228,41 @@ object TimePerceptionEngine {
         birthDateStr: String,
         initialAge: Int
     ): Triple<String, Long, Int> {
-        val newDayCounter = currentDayCounter + elapsedDaysToAdd.coerceAtLeast(0)
+        val daysToAdd = elapsedDaysToAdd.coerceAtLeast(0)
+        val newDayCounter = currentDayCounter + daysToAdd
 
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-        sdf.timeZone = TimeZone.getDefault()
-        val currentDate = try {
-            if (currentCalendarDateStr.isBlank()) null else sdf.parse(currentCalendarDateStr)
-        } catch (_: Exception) {
-            null
-        }
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        sdf.timeZone = TimeZone.getTimeZone("UTC")
+
+        val currentDate = if (currentCalendarDateStr.isNotBlank()) {
+            try { sdf.parse(currentCalendarDateStr) } catch (_: Exception) { null }
+        } else null
 
         val newCalendarDateStr = if (currentDate != null) {
-            val cal = Calendar.getInstance()
+            val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
             cal.time = currentDate
-            if (elapsedDaysToAdd > 0) {
-                cal.add(Calendar.DAY_OF_YEAR, elapsedDaysToAdd)
-            }
+            if (daysToAdd > 0) cal.add(Calendar.DAY_OF_MONTH, daysToAdd)
             sdf.format(cal.time)
         } else ""
 
         var newAge = initialAge
-        if (birthDateStr.isNotBlank() && currentDate != null) {
+        if (birthDateStr.isNotBlank() && newCalendarDateStr.isNotBlank()) {
             try {
                 val birthDate = sdf.parse(birthDateStr)
-                if (birthDate != null) {
-                    val cal = Calendar.getInstance().apply { time = currentDate }
-                    if (elapsedDaysToAdd > 0) cal.add(Calendar.DAY_OF_YEAR, elapsedDaysToAdd)
-                    val birthCal = Calendar.getInstance().apply { time = birthDate }
+                val newDate = sdf.parse(newCalendarDateStr)
+                if (birthDate != null && newDate != null) {
+                    val calNew = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { time = newDate }
+                    val calBirth = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { time = birthDate }
 
-                    var age = cal.get(Calendar.YEAR) - birthCal.get(Calendar.YEAR)
-                    if (cal.get(Calendar.DAY_OF_YEAR) < birthCal.get(Calendar.DAY_OF_YEAR)) {
-                        age--
-                    }
+                    var age = calNew.get(Calendar.YEAR) - calBirth.get(Calendar.YEAR)
+                    // Doğum günü bu yıl henüz geçmediyse bir eksilt (ay/gün karşılaştırması)
+                    val newMM = calNew.get(Calendar.MONTH) * 100 + calNew.get(Calendar.DAY_OF_MONTH)
+                    val birthMM = calBirth.get(Calendar.MONTH) * 100 + calBirth.get(Calendar.DAY_OF_MONTH)
+                    if (newMM < birthMM) age--
                     if (age > 0) newAge = age
                 }
             } catch (_: Exception) {}
-        } else {
+        } else if (birthDateStr.isBlank()) {
             val extraYears = ((newDayCounter - 1) / 365).toInt()
             newAge = initialAge + extraYears
         }
@@ -260,37 +270,44 @@ object TimePerceptionEngine {
         return Triple(newCalendarDateStr, newDayCounter, newAge)
     }
 
-    /**
-     * Builds single-line compact story time block for LLM prompt.
-     * Replaces old 3-block real-time system.
-     */
+    // ---------------------------------------------------------------------------
+    // buildStoryTimePromptBlock — tek satır, koşullu, gerçek zaman yok
+    // ---------------------------------------------------------------------------
+
     fun buildStoryTimePromptBlock(
         storyDayCounter: Long,
         storyCalendarDate: String,
         currentAge: Int,
-        sceneTime: String = ""
+        sceneTime: String = "",
+        hasExplicitStoryDate: Boolean = false
     ): String {
+        if (storyDayCounter <= 0L) return ""
+
+        val validScene = validateSceneTime(sceneTime)
+
         val parts = mutableListOf<String>()
         parts.add("Gün #$storyDayCounter")
-        if (storyCalendarDate.isNotBlank()) {
+        if (hasExplicitStoryDate && storyCalendarDate.isNotBlank()) {
             parts.add("Tarih: $storyCalendarDate")
         }
         if (currentAge > 0) {
             parts.add("Yaş: $currentAge")
         }
-        if (sceneTime.isNotBlank()) {
-            parts.add("Sahne: $sceneTime")
+        if (validScene != null) {
+            parts.add("Sahne: $validScene")
         }
 
         val singleLine = parts.joinToString(" | ")
-        val moodHint = when (sceneTime.lowercase()) {
+
+        val moodHint = when (validScene) {
             "sabah" -> " (sabah: sakin/mahmur ton)"
-            "öğle" -> " (öğle: canlı/odaklı ton)"
+            "öğle"  -> " (öğle: canlı/odaklı ton)"
             "akşam" -> " (akşam: dinlenmiş/yumuşak ton)"
-            "gece" -> " (gece: uykulu/samimi ton)"
-            else -> ""
+            "gece"  -> " (gece: uykulu/samimi ton)"
+            else    -> ""
         }
 
-        return "\n## HİKÂYE ZAMANI: $singleLine$moodHint\n- KURAL: Gerçek dünya saati ve tarihi yoktur. Zaman yalnızca hikâyedeki zaman atlamalarıyla ilerler. Kullanıcı ara verse de sohbet kesintisiz devam eder.\n"
+        return "\n## HİKÂYE ZAMANI: $singleLine$moodHint\n" +
+               "- KURAL: Gerçek dünya saati ve tarihi yoktur. Zaman yalnızca hikâyedeki zaman atlamalarıyla ilerler. Kullanıcı ara verse de sohbet kesintisiz devam eder.\n"
     }
 }

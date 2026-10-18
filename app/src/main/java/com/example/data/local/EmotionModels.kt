@@ -773,67 +773,16 @@ data class EmotionState(
             userCharName: String = "",
             userCharDesc: String = ""
         ): EmotionState {
-            val combinedText = "$aiName $personality $scenario $userCharName $userCharDesc".lowercase()
-
-            val isMother = combinedText.contains("anne") || combinedText.contains("valide")
-            val isFather = combinedText.contains("baba")
-            val isSibling = combinedText.contains("kardeş") || combinedText.contains("abla") || combinedText.contains("abi")
-            val isBestFriend = combinedText.contains("yakın dost") || combinedText.contains("sırdaş") || combinedText.contains("çocukluk arkadaşı")
-            val isLover = combinedText.contains("sevgili") || combinedText.contains("eş ") || combinedText.contains("aşık") || combinedText.contains("partner")
-            val isRival = combinedText.contains("düşman") || combinedText.contains("rakip") || combinedText.contains("hasım")
-            val isStranger = combinedText.contains("yabancı") || combinedText.contains("tanımıyor")
-
-            val hasConflict = combinedText.contains("kavga") || combinedText.contains("küs") ||
-                    combinedText.contains("tartışma") || combinedText.contains("soğukluk")
-
-            return when {
-                (isMother || isFather) && hasConflict -> EmotionState(
-                    primaryEmotions = PrimaryEmotions(trust = 45, sadness = 40),
-                    relationshipAxes = RelationshipAxes(affectionScore = 75, respectScore = 60, comfortScore = 40, resentmentScore = 60),
-                    dominantEmotion = "kırgın ve mesafeli",
-                    suppressedEmotion = "hüzünlü sevgi"
-                )
-                (isMother || isFather) -> EmotionState(
-                    primaryEmotions = PrimaryEmotions(joy = 40, trust = 88),
-                    relationshipAxes = RelationshipAxes(affectionScore = 92, respectScore = 80, comfortScore = 85, resentmentScore = 0),
-                    dominantEmotion = "korumacı ve şefkatli"
-                )
-                isLover && hasConflict -> EmotionState(
-                    primaryEmotions = PrimaryEmotions(trust = 50, sadness = 50, anger = 30),
-                    relationshipAxes = RelationshipAxes(affectionScore = 80, respectScore = 60, comfortScore = 45, resentmentScore = 55),
-                    dominantEmotion = "buruk ve tereddütlü"
-                )
-                isLover -> EmotionState(
-                    primaryEmotions = PrimaryEmotions(joy = 60, trust = 85),
-                    relationshipAxes = RelationshipAxes(affectionScore = 90, respectScore = 80, comfortScore = 85, resentmentScore = 0),
-                    dominantEmotion = "sevecen ve tutkulu"
-                )
-                isBestFriend -> EmotionState(
-                    primaryEmotions = PrimaryEmotions(joy = 50, trust = 85),
-                    relationshipAxes = RelationshipAxes(affectionScore = 85, respectScore = 75, comfortScore = 80, resentmentScore = 0),
-                    dominantEmotion = "sıcak ve samimi"
-                )
-                isSibling -> EmotionState(
-                    primaryEmotions = PrimaryEmotions(joy = 40, trust = 80),
-                    relationshipAxes = RelationshipAxes(affectionScore = 82, respectScore = 70, comfortScore = 75, resentmentScore = 0),
-                    dominantEmotion = "samimi ve alaycı"
-                )
-                isRival -> EmotionState(
-                    primaryEmotions = PrimaryEmotions(trust = 10, fear = 30, anger = 50),
-                    relationshipAxes = RelationshipAxes(affectionScore = 15, respectScore = 40, comfortScore = 10, resentmentScore = 75),
-                    dominantEmotion = "şüpheci ve tetikte"
-                )
-                isStranger -> EmotionState(
-                    primaryEmotions = PrimaryEmotions(trust = 25, anticipation = 40),
-                    relationshipAxes = RelationshipAxes(affectionScore = 30, respectScore = 50, comfortScore = 30, resentmentScore = 0),
-                    dominantEmotion = "temkinli ve meraklı"
-                )
-                else -> EmotionState(
-                    primaryEmotions = PrimaryEmotions(trust = 50, anticipation = 30),
-                    relationshipAxes = RelationshipAxes(affectionScore = 50, respectScore = 50, comfortScore = 50, resentmentScore = 0),
-                    dominantEmotion = "nötr ve ilgili"
-                )
-            }
+            // Delegate to BaselineEmotionEngine which uses word-boundary regex (no substring false positives)
+            return com.example.data.repository.BaselineEmotionEngine
+                .calculateDeterministicFallback(
+                    botId = "",
+                    aiName = aiName,
+                    personality = personality,
+                    scenario = scenario,
+                    userCharName = userCharName,
+                    userCharDesc = userCharDesc
+                ).baselineEmotionState
         }
     }
 }

@@ -24,5 +24,6 @@ data class MessageEntity(
     val text: String,
     val timestamp: Long = System.currentTimeMillis(),
     val status: String = "success", // "success", "failed", "pending"
-    val provider: String = ""
+    val provider: String = "",
+    val isStarred: Boolean = false
 )
