@@ -265,9 +265,10 @@ val MIGRATION_27_28 = object : Migration(27, 28) {
         EntityRelationEntity::class,
         ImplicitCorrectionLogEntity::class,
         ArchivedMemoryEntity::class,
-        RoutineEntity::class
+        RoutineEntity::class,
+        MilestoneEntity::class
     ],
-    version = 40,
+    version = 47,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -298,6 +299,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun implicitCorrectionLogDao(): ImplicitCorrectionLogDao
     abstract fun archivedMemoryDao(): ArchivedMemoryDao
     abstract fun routineDao(): RoutineDao
+    abstract fun milestoneDao(): MilestoneDao
 
     companion object {
         val MIGRATION_28_29 = object : Migration(28, 29) {
@@ -671,6 +673,68 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_40_41 = object : Migration(40, 41) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `bots` ADD COLUMN `sceneTime` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `bots` ADD COLUMN `hasExplicitStoryDate` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_41_42 = object : Migration(41, 42) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `bots` ADD COLUMN `baselineAnalysisSource` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `bots` ADD COLUMN `baselineInputHash` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `bots` ADD COLUMN `baselineUserEditedFields` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        val MIGRATION_42_43 = object : Migration(42, 43) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `memory_checkpoints` ADD COLUMN `isTemporary` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_43_44 = object : Migration(43, 44) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `bots` ADD COLUMN `proactiveEnabled` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `messages` ADD COLUMN `isStarred` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_44_45 = object : Migration(44, 45) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `milestones` (" +
+                        "`id` TEXT PRIMARY KEY NOT NULL, " +
+                        "`botId` TEXT NOT NULL, " +
+                        "`type` TEXT NOT NULL, " +
+                        "`title` TEXT NOT NULL, " +
+                        "`emoji` TEXT NOT NULL, " +
+                        "`affectionAtTime` INTEGER NOT NULL, " +
+                        "`trustAtTime` INTEGER NOT NULL, " +
+                        "`reachedAt` INTEGER NOT NULL" +
+                        ")"
+                )
+            }
+        }
+
+        val MIGRATION_45_46 = object : Migration(45, 46) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `messages` ADD COLUMN `reaction` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        val MIGRATION_46_47 = object : Migration(46, 47) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // CustomProviderEntity: utility model fields for small/cheap background tasks
+                db.execSQL("ALTER TABLE `custom_providers` ADD COLUMN `utilityModel` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `custom_providers` ADD COLUMN `utilityModelSource` TEXT NOT NULL DEFAULT 'none'")
+                db.execSQL("ALTER TABLE `custom_providers` ADD COLUMN `detectedSmallModels` TEXT NOT NULL DEFAULT '[]'")
+                // CastMemberEntity: personality profile for side characters
+                db.execSQL("ALTER TABLE `cast_members` ADD COLUMN `personalityJson` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -712,7 +776,14 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_36_37,
                         MIGRATION_37_38,
                         MIGRATION_38_39,
-                        MIGRATION_39_40
+                        MIGRATION_39_40,
+                        MIGRATION_40_41,
+                        MIGRATION_41_42,
+                        MIGRATION_42_43,
+                        MIGRATION_43_44,
+                        MIGRATION_44_45,
+                        MIGRATION_45_46,
+                        MIGRATION_46_47
                     )
                     .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()

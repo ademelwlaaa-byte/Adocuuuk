@@ -36,8 +36,12 @@ data class CastMemberEntity(
     val dailyAffectionGain: Int = 0,
     val lastGainResetDate: String = "",
     val peakAffectionScore: Int = 50,
-    val recoveryLockUntilMessageCount: Int = 0
-)
+    val recoveryLockUntilMessageCount: Int = 0,
+    val personalityJson: String = ""   // serialized PersonalityProfile, derived once at first appearance
+) {
+    // Unified character model: isAutoAdded=false means manually added by user (was KeyCharacter)
+    val isManuallyAdded: Boolean get() = !isAutoAdded
+}
 
 @Dao
 interface CastMemberDao {

@@ -2,6 +2,10 @@ package com.example.ui.components
 
 import com.example.ui.theme.AppColors
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -18,13 +22,17 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -35,6 +43,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.example.data.local.AffectionEventEntity
@@ -64,13 +73,26 @@ fun EmotionStatusSection(
     val worldState = remember(bot.worldAtmosphere) { WorldState.fromJson(bot.worldAtmosphere) }
     var showTimeline by remember { mutableStateOf(false) }
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = EmochiCard),
-        shape = RoundedCornerShape(14.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, EmochiBorder),
-        modifier = modifier.fillMaxWidth()
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(Color(0xFF130B2E), Color(0xFF0C0720), Color(0xFF10082A))
+                )
+            )
+            .border(
+                androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    Brush.linearGradient(
+                        listOf(Color(0xFF6D28D9), Color(0xFF4C1D95), Color(0xFF7C3AED))
+                    )
+                ),
+                RoundedCornerShape(20.dp)
+            )
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -78,42 +100,102 @@ fun EmotionStatusSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "❤️",
-                        fontSize = 16.sp
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = if (isUniverse) "Evren ve Ruh Hali Takibi" else "Duygu ve İlişki Durumu",
-                        color = EmochiPrimary,
-                        fontSize = 13.5.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    // Icon circle
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                Brush.radialGradient(
+                                    listOf(Color(0xFF7C3AED), Color(0xFF3B1070))
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (isUniverse) "🌌" else "❤️",
+                            fontSize = 16.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = if (isUniverse) "Evren & Atmosfer" else "Duygu & İlişki",
+                            color = Color(0xFFCDA8FF),
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            text = if (isUniverse) "Dünya simülasyonu aktif" else "Gerçek zamanlı takip",
+                            color = Color(0xFF7C3AED),
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
+                // Mood badge — gradient border pill
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(AppColors.Hex_23253A)
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF1E1040), Color(0xFF130A2A))
+                            )
+                        )
+                        .border(
+                            androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                Brush.linearGradient(
+                                    listOf(Color(0xFFA855F7), Color(0xFF6D28D9))
+                                )
+                            ),
+                            RoundedCornerShape(12.dp)
+                        )
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
                     Text(
                         text = "${emotion.getMoodEmoji()} ${emotion.mood.replaceFirstChar { it.uppercase() }}",
-                        color = EmochiTextPrimary,
+                        color = Color(0xFFE9D5FF),
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.ExtraBold
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(14.dp))
+            // Thin separator
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.8.dp)
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(Color.Transparent, Color(0x50A855F7), Color.Transparent)
+                        )
+                    )
+            )
 
             // İçerik Filtresi İstatistiği Rozeti
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(AppColors.Hex_1E1726)
-                    .border(1.dp, Color(0x408B5CF6), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                    .padding(top = 12.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(Color(0xFF1A0E38), Color(0xFF100825))
+                        )
+                    )
+                    .border(
+                        androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            Brush.linearGradient(
+                                listOf(Color(0x60A855F7), Color(0x304C1D95))
+                            )
+                        ),
+                        RoundedCornerShape(12.dp)
+                    )
+                    .padding(horizontal = 12.dp, vertical = 9.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -121,16 +203,38 @@ fun EmotionStatusSection(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("🛡️", fontSize = 12.sp)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("İçerik Filtresi İstatistiği", color = AppColors.PurpleSoft, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                        Text("🛡️", fontSize = 13.sp)
+                        Spacer(modifier = Modifier.width(7.dp))
+                        Text(
+                            "Filtre İstatistiği",
+                            color = Color(0xFFCDA8FF),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
-                    Text(
-                        text = "Son 100 mesajda $filterCount filtre tetiklendi",
-                        color = if (filterCount > 0) AppColors.ErrorRedSoft else AppColors.Hex_86EFAC,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (filterCount > 0)
+                                    Brush.linearGradient(listOf(Color(0xFF3D1018), Color(0xFF1F0A10)))
+                                else
+                                    Brush.linearGradient(listOf(Color(0xFF0D2818), Color(0xFF071510)))
+                            )
+                            .border(
+                                1.dp,
+                                if (filterCount > 0) Color(0xFFF87171) else Color(0xFF86EFAC),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = if (filterCount > 0) "$filterCount tetiklendi" else "Temiz",
+                            color = if (filterCount > 0) Color(0xFFFCA5A5) else Color(0xFF86EFAC),
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
                 }
             }
 
@@ -466,8 +570,16 @@ fun EmotionStatusSection(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.End
                                 ) {
-                                    androidx.compose.material3.TextButton(onClick = { editingCharacter = null }) {
-                                        Text("İptal", color = EmochiTextMuted)
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
+                                            .background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(androidx.compose.ui.graphics.Color(0xFF130C2A), androidx.compose.ui.graphics.Color(0xFF0E0820))))
+                                            .border(0.8.dp, androidx.compose.ui.graphics.Color(0x50A855F7), androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
+                                            .clickable { editingCharacter = null }
+                                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("İptal", color = EmochiTextMuted, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
                                     }
                                     Spacer(modifier = Modifier.width(8.dp))
                                     androidx.compose.material3.Button(
@@ -524,42 +636,86 @@ fun EmotionStatusSection(
             )
             Spacer(modifier = Modifier.height(10.dp))
 
-            Row(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(AppColors.CardDark)
-                    .clickable { showTimeline = !showTimeline }
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("📜", fontSize = 14.sp)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "İlişki Geçmişi / Zaman Çizelgesi (${affectionEvents.size})",
-                        color = EmochiTextPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(Color(0xFF180E38), Color(0xFF100825))
+                        )
                     )
+                    .border(
+                        androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            Brush.linearGradient(
+                                listOf(Color(0x50A855F7), Color(0x306D28D9))
+                            )
+                        ),
+                        RoundedCornerShape(12.dp)
+                    )
+                    .clickable { showTimeline = !showTimeline }
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("📜", fontSize = 14.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "İlişki Zaman Çizelgesi",
+                                color = Color(0xFFCDA8FF),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            if (affectionEvents.isNotEmpty()) {
+                                Text(
+                                    text = "${affectionEvents.size} kayıt",
+                                    color = Color(0xFF7C3AED),
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0x30A855F7)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (showTimeline) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Aç/Kapat",
+                            tint = Color(0xFFA855F7),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
-                Icon(
-                    imageVector = if (showTimeline) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Aç/Kapat",
-                    tint = EmochiTextSecondary
-                )
             }
 
             if (showTimeline) {
                 Spacer(modifier = Modifier.height(8.dp))
                 if (affectionEvents.isEmpty()) {
-                    Text(
-                        text = "Henüz belirgin bir ilişki kırılması veya büyük yakınlık değişimi kaydedilmedi.",
-                        color = EmochiTextMuted,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF0D0820))
+                            .padding(14.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Henüz ilişki kırılması veya yakınlık değişimi kaydedilmedi.",
+                            color = EmochiTextMuted,
+                            fontSize = 11.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
                 } else {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
@@ -577,32 +733,51 @@ fun EmotionStatusSection(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(AppColors.Hex_161826)
-                                    .padding(8.dp),
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF130B28), Color(0xFF0C0720))
+                                        )
+                                    )
+                                    .border(
+                                        androidx.compose.foundation.BorderStroke(
+                                            0.8.dp,
+                                            if (isPos) Brush.linearGradient(listOf(Color(0x4086EFAC), Color(0x2022C55E)))
+                                            else Brush.linearGradient(listOf(Color(0x40F87171), Color(0x20DC2626)))
+                                        ),
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .padding(10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(badgeColor.copy(alpha = 0.2f))
-                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(badgeColor.copy(alpha = 0.18f))
+                                        .border(
+                                            0.8.dp,
+                                            badgeColor.copy(alpha = 0.5f),
+                                            RoundedCornerShape(6.dp)
+                                        )
+                                        .padding(horizontal = 7.dp, vertical = 3.dp)
                                 ) {
                                     Text(
                                         text = badgeText,
                                         color = badgeColor,
                                         fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
+                                        fontWeight = FontWeight.ExtraBold
                                     )
                                 }
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = ev.shortDescription,
                                         color = EmochiTextPrimary,
-                                        fontSize = 11.sp
+                                        fontSize = 11.sp,
+                                        lineHeight = 15.sp
                                     )
                                     if (dateStr.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(2.dp))
                                         Text(
                                             text = dateStr,
                                             color = EmochiTextMuted,
@@ -627,6 +802,23 @@ private fun EmotionBarItem(
     color: Color,
     icon: String
 ) {
+    val targetFraction = (value.toFloat() / maxValue.toFloat()).coerceIn(0f, 1f)
+    var animTarget by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(targetFraction) { animTarget = targetFraction }
+    val animatedFraction by animateFloatAsState(
+        targetValue = animTarget,
+        animationSpec = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+        label = "barFill"
+    )
+
+    // Lighten color for gradient
+    val colorLight = Color(
+        red   = (color.red   + 0.28f).coerceAtMost(1f),
+        green = (color.green + 0.22f).coerceAtMost(1f),
+        blue  = (color.blue  + 0.28f).coerceAtMost(1f),
+        alpha = 1f
+    )
+
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -635,20 +827,93 @@ private fun EmotionBarItem(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(icon, fontSize = 11.sp)
-                Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(5.dp))
                 Text(label, color = EmochiTextSecondary, fontSize = 11.sp)
             }
-            Text("$value / $maxValue", color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "$value",
+                color = color,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
         }
-        Spacer(modifier = Modifier.height(3.dp))
-        LinearProgressIndicator(
-            progress = { (value.toFloat() / maxValue.toFloat()).coerceIn(0f, 1f) },
+        Spacer(modifier = Modifier.height(5.dp))
+
+        Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(6.dp)
-                .clip(RoundedCornerShape(3.dp)),
-            color = color,
-            trackColor = AppColors.CardCharcoal
-        )
+                .height(7.dp)
+        ) {
+            val trackH = size.height
+            val trackW = size.width
+            val cr = CornerRadius(trackH / 2f, trackH / 2f)
+
+            // Track background
+            drawRoundRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(
+                        Color(0xFF1A1035),
+                        Color(0xFF120826)
+                    )
+                ),
+                size = Size(trackW, trackH),
+                cornerRadius = cr
+            )
+
+            // Subtle track glow
+            drawRoundRect(
+                color = color.copy(alpha = 0.12f),
+                size = Size(trackW, trackH),
+                cornerRadius = cr
+            )
+
+            if (animatedFraction > 0f) {
+                val fillW = trackW * animatedFraction
+
+                // Filled bar gradient
+                drawRoundRect(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(colorLight, color),
+                        startX = 0f,
+                        endX = fillW
+                    ),
+                    size = Size(fillW, trackH),
+                    cornerRadius = cr
+                )
+
+                // Glow line on top of bar
+                drawRoundRect(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            colorLight.copy(alpha = 0.55f),
+                            Color.White.copy(alpha = 0.30f),
+                            Color.Transparent
+                        ),
+                        startX = 0f,
+                        endX = fillW
+                    ),
+                    size = Size(fillW, trackH * 0.45f),
+                    cornerRadius = CornerRadius(trackH * 0.45f / 2f)
+                )
+
+                // Tip glow dot
+                if (fillW > trackH) {
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = 0.80f),
+                                colorLight.copy(alpha = 0.40f),
+                                Color.Transparent
+                            ),
+                            center = Offset(fillW - trackH / 2f, trackH / 2f),
+                            radius = trackH * 1.1f
+                        ),
+                        radius = trackH * 1.1f,
+                        center = Offset(fillW - trackH / 2f, trackH / 2f)
+                    )
+                }
+            }
+        }
     }
 }

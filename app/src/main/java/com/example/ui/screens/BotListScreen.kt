@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import com.example.ui.theme.AppColors
+import com.example.ui.theme.EmochiGradients
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -15,12 +16,18 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -113,6 +120,9 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.material.icons.filled.Close
 import coil.compose.AsyncImage
 import com.example.R
@@ -176,213 +186,317 @@ fun BotListScreen(
             containerColor = Color.Transparent,
             contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         bottomBar = {
-            Column(
+            // Infinite transition for center button pulse + nav glow
+            val navInfinite = rememberInfiniteTransition(label = "navInfinite")
+            val centerPulseScale by navInfinite.animateFloat(
+                initialValue = 1.0f, targetValue = 1.18f,
+                animationSpec = infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                label = "centerPulse"
+            )
+            val centerPulseAlpha by navInfinite.animateFloat(
+                initialValue = 0.35f, targetValue = 0.0f,
+                animationSpec = infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                label = "centerPulseAlpha"
+            )
+
+            // Tab definitions
+            data class NavTab(val key: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val label: String)
+            val tabs = listOf(
+                NavTab("discover",  Icons.Default.AutoAwesome, "Keşfet"),
+                NavTab("chats",     Icons.Default.Forum,       "Sohbet"),
+                NavTab("templates", Icons.Default.Person,      "Şablon"),
+                NavTab("books",     Icons.Default.MenuBook,    "Kitap")
+            )
+            val listStates = mapOf(
+                "discover"  to discoverListState,
+                "chats"     to chatsListState,
+                "templates" to templatesListState,
+                "books"     to booksListState
+            )
+
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(EmochiSurface)
                     .navigationBarsPadding()
             ) {
+                // Fade-out gradient above nav bar
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(1.dp)
-                        .background(com.example.ui.theme.EmochiGradients.glassBorder)
+                        .height(32.dp)
+                        .align(Alignment.TopCenter)
+                        .offset(y = (-32).dp)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color(0xFF070510).copy(alpha = 0.85f))
+                            )
+                        )
                 )
-                Row(
+
+                // Glass nav card
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 4.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.SpaceAround,
-                    verticalAlignment = Alignment.Bottom
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color(0xE8090618), Color(0xFF070510))
+                            )
+                        )
+                        .border(
+                            BorderStroke(
+                                0.8.dp,
+                                Brush.horizontalGradient(
+                                    listOf(
+                                        Color(0x00A855F7),
+                                        Color(0x60A855F7),
+                                        Color(0x30C084FC),
+                                        Color(0x60A855F7),
+                                        Color(0x00A855F7)
+                                    )
+                                )
+                            ),
+                            RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
                 ) {
-                    // 1. Keşfet Tab
-                    val isDiscoverSelected = activeTab == "discover"
-                    val discoverScale by androidx.compose.animation.core.animateFloatAsState(
-                        targetValue = if (isDiscoverSelected) 1.08f else 1.0f,
-                        label = "tabScale"
-                    )
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (isDiscoverSelected) Color(0x1FA78BFA) else Color.Transparent)
-                            .clickable {
-                                if (activeTab == "discover") {
-                                    coroutineScope.launch { discoverListState.animateScrollToItem(0) }
-                                } else {
-                                    activeTab = "discover"
-                                    coroutineScope.launch { discoverListState.scrollToItem(0) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceAround,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Left two tabs
+                        tabs.take(2).forEach { tab ->
+                            val isSelected = activeTab == tab.key
+                            val iconScale by animateFloatAsState(
+                                targetValue = if (isSelected) 1.12f else 1.0f,
+                                animationSpec = tween(220, easing = FastOutSlowInEasing),
+                                label = "iconScale_${tab.key}"
+                            )
+                            val labelAlpha by animateFloatAsState(
+                                targetValue = if (isSelected) 1f else 0.55f,
+                                animationSpec = tween(220),
+                                label = "labelAlpha_${tab.key}"
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .then(
+                                        if (isSelected) Modifier.background(
+                                            Brush.verticalGradient(
+                                                listOf(Color(0x267C3AED), Color(0x124C1D95))
+                                            )
+                                        ) else Modifier
+                                    )
+                                    .clickable {
+                                        if (activeTab == tab.key) {
+                                            coroutineScope.launch { listStates[tab.key]?.animateScrollToItem(0) }
+                                        } else {
+                                            activeTab = tab.key
+                                            coroutineScope.launch { listStates[tab.key]?.scrollToItem(0) }
+                                        }
+                                    }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    // Selected indicator pill
+                                    Box(
+                                        modifier = Modifier
+                                            .height(3.dp)
+                                            .width(
+                                                if (isSelected) 22.dp else 0.dp
+                                            )
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(
+                                                if (isSelected) Brush.horizontalGradient(
+                                                    listOf(Color(0xFFC084FC), Color(0xFF7C3AED))
+                                                ) else Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
+                                            )
+                                    )
+                                    Spacer(modifier = Modifier.height(5.dp))
+                                    // Icon with glow when selected
+                                    Box(contentAlignment = Alignment.Center) {
+                                        if (isSelected) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(32.dp)
+                                                    .background(
+                                                        Brush.radialGradient(
+                                                            listOf(Color(0x40A855F7), Color.Transparent)
+                                                        ),
+                                                        CircleShape
+                                                    )
+                                            )
+                                        }
+                                        Icon(
+                                            imageVector = tab.icon,
+                                            contentDescription = tab.label,
+                                            tint = if (isSelected) EmochiPrimary else EmochiTextMuted,
+                                            modifier = Modifier
+                                                .size(22.dp)
+                                                .graphicsLayer { scaleX = iconScale; scaleY = iconScale }
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Text(
+                                        text = tab.label,
+                                        color = if (isSelected) EmochiPrimary else EmochiTextMuted.copy(alpha = labelAlpha),
+                                        fontSize = 10.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                    )
                                 }
                             }
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                            .graphicsLayer {
-                                scaleX = discoverScale
-                                scaleY = discoverScale
-                            }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = "Keşfet",
-                            tint = if (isDiscoverSelected) EmochiPrimary else EmochiTextMuted,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Text(
-                            text = "Keşfet",
-                            color = if (isDiscoverSelected) EmochiPrimary else EmochiTextMuted,
-                            fontSize = 10.5.sp,
-                            fontWeight = if (isDiscoverSelected) FontWeight.Bold else FontWeight.Medium,
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
-                    }
-
-                    // 2. Sohbetler Tab
-                    val isChatsSelected = activeTab == "chats"
-                    val chatsScale by androidx.compose.animation.core.animateFloatAsState(
-                        targetValue = if (isChatsSelected) 1.08f else 1.0f,
-                        label = "tabScale"
-                    )
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (isChatsSelected) Color(0x1FA78BFA) else Color.Transparent)
-                            .clickable {
-                                if (activeTab == "chats") {
-                                    coroutineScope.launch { chatsListState.animateScrollToItem(0) }
-                                } else {
-                                    activeTab = "chats"
-                                    coroutineScope.launch { chatsListState.scrollToItem(0) }
-                                }
-                            }
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                            .graphicsLayer {
-                                scaleX = chatsScale
-                                scaleY = chatsScale
-                            }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Forum,
-                            contentDescription = "Sohbetler",
-                            tint = if (isChatsSelected) EmochiPrimary else EmochiTextMuted,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Text(
-                            text = "Sohbetler",
-                            color = if (isChatsSelected) EmochiPrimary else EmochiTextMuted,
-                            fontSize = 10.5.sp,
-                            fontWeight = if (isChatsSelected) FontWeight.Bold else FontWeight.Medium,
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
-                    }
-
-                    // 3. Center (+) Rising Floating Gradient Button labeled "Oluştur"
-                    Box(
-                        modifier = Modifier
-                            .offset(y = (-8).dp)
-                            .size(68.dp)
-                            .clip(CircleShape)
-                            .background(com.example.ui.theme.EmochiGradients.primaryButton)
-                            .clickable { onNewBot() }
-                            .testTag("create_new_bot_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "Oluştur",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Text(
-                                text = "Oluştur",
-                                color = Color.White,
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
                         }
-                    }
 
-                    // 4. Şablonlar (templates) Tab
-                    val isTemplatesSelected = activeTab == "templates"
-                    val templatesScale by androidx.compose.animation.core.animateFloatAsState(
-                        targetValue = if (isTemplatesSelected) 1.08f else 1.0f,
-                        label = "tabScale"
-                    )
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (isTemplatesSelected) Color(0x1FA78BFA) else Color.Transparent)
-                            .clickable {
-                                if (activeTab == "templates") {
-                                    coroutineScope.launch { templatesListState.animateScrollToItem(0) }
-                                } else {
-                                    activeTab = "templates"
-                                    coroutineScope.launch { templatesListState.scrollToItem(0) }
+                        // Center FAB — Oluştur
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(bottom = 2.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // Outer pulse ring
+                            Box(
+                                modifier = Modifier
+                                    .offset(y = (-10).dp)
+                                    .size(72.dp)
+                                    .graphicsLayer {
+                                        scaleX = centerPulseScale
+                                        scaleY = centerPulseScale
+                                        alpha = centerPulseAlpha
+                                    }
+                                    .clip(CircleShape)
+                                    .background(
+                                        Brush.radialGradient(
+                                            listOf(Color(0xFF9333EA), Color(0x007C3AED))
+                                        )
+                                    )
+                            )
+                            // Inner button
+                            Box(
+                                modifier = Modifier
+                                    .offset(y = (-10).dp)
+                                    .size(62.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFFB06CF4), Color(0xFF8B33F0), Color(0xFF5B21B6))
+                                        )
+                                    )
+                                    .border(
+                                        BorderStroke(
+                                            2.dp,
+                                            Brush.sweepGradient(EmochiGradients.avatarBorderSweep)
+                                        ),
+                                        CircleShape
+                                    )
+                                    .clickable { onNewBot() }
+                                    .testTag("create_new_bot_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = "Oluştur",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Text(
+                                        text = "Oluştur",
+                                        color = Color.White.copy(alpha = 0.90f),
+                                        fontSize = 9.5.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
                                 }
                             }
-                            .padding(horizontal = 8.dp, vertical = 6.dp)
-                            .graphicsLayer {
-                                scaleX = templatesScale
-                                scaleY = templatesScale
-                            }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Person,
-                            contentDescription = "Şablonlar",
-                            tint = if (isTemplatesSelected) EmochiPrimary else EmochiTextMuted,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Text(
-                            text = "Şablonlar",
-                            color = if (isTemplatesSelected) EmochiPrimary else EmochiTextMuted,
-                            fontSize = 10.5.sp,
-                            fontWeight = if (isTemplatesSelected) FontWeight.Bold else FontWeight.Medium,
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
-                    }
+                        }
 
-                    // 5. Kitaplar (books) Tab
-                    val isBooksSelected = activeTab == "books"
-                    val booksScale by androidx.compose.animation.core.animateFloatAsState(
-                        targetValue = if (isBooksSelected) 1.08f else 1.0f,
-                        label = "tabScale"
-                    )
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (isBooksSelected) Color(0x1FA78BFA) else Color.Transparent)
-                            .clickable {
-                                if (activeTab == "books") {
-                                    coroutineScope.launch { booksListState.animateScrollToItem(0) }
-                                } else {
-                                    activeTab = "books"
-                                    coroutineScope.launch { booksListState.scrollToItem(0) }
+                        // Right two tabs
+                        tabs.drop(2).forEach { tab ->
+                            val isSelected = activeTab == tab.key
+                            val iconScale by animateFloatAsState(
+                                targetValue = if (isSelected) 1.12f else 1.0f,
+                                animationSpec = tween(220, easing = FastOutSlowInEasing),
+                                label = "iconScale2_${tab.key}"
+                            )
+                            val labelAlpha by animateFloatAsState(
+                                targetValue = if (isSelected) 1f else 0.55f,
+                                animationSpec = tween(220),
+                                label = "labelAlpha2_${tab.key}"
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .then(
+                                        if (isSelected) Modifier.background(
+                                            Brush.verticalGradient(
+                                                listOf(Color(0x267C3AED), Color(0x124C1D95))
+                                            )
+                                        ) else Modifier
+                                    )
+                                    .clickable {
+                                        if (activeTab == tab.key) {
+                                            coroutineScope.launch { listStates[tab.key]?.animateScrollToItem(0) }
+                                        } else {
+                                            activeTab = tab.key
+                                            coroutineScope.launch { listStates[tab.key]?.scrollToItem(0) }
+                                        }
+                                    }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Box(
+                                        modifier = Modifier
+                                            .height(3.dp)
+                                            .width(if (isSelected) 22.dp else 0.dp)
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(
+                                                if (isSelected) Brush.horizontalGradient(
+                                                    listOf(Color(0xFFC084FC), Color(0xFF7C3AED))
+                                                ) else Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
+                                            )
+                                    )
+                                    Spacer(modifier = Modifier.height(5.dp))
+                                    Box(contentAlignment = Alignment.Center) {
+                                        if (isSelected) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(32.dp)
+                                                    .background(
+                                                        Brush.radialGradient(
+                                                            listOf(Color(0x40A855F7), Color.Transparent)
+                                                        ),
+                                                        CircleShape
+                                                    )
+                                            )
+                                        }
+                                        Icon(
+                                            imageVector = tab.icon,
+                                            contentDescription = tab.label,
+                                            tint = if (isSelected) EmochiPrimary else EmochiTextMuted,
+                                            modifier = Modifier
+                                                .size(22.dp)
+                                                .graphicsLayer { scaleX = iconScale; scaleY = iconScale }
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Text(
+                                        text = tab.label,
+                                        color = if (isSelected) EmochiPrimary else EmochiTextMuted.copy(alpha = labelAlpha),
+                                        fontSize = 10.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                    )
                                 }
                             }
-                            .padding(horizontal = 8.dp, vertical = 6.dp)
-                            .graphicsLayer {
-                                scaleX = booksScale
-                                scaleY = booksScale
-                            }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MenuBook,
-                            contentDescription = "Kitaplar",
-                            tint = if (isBooksSelected) EmochiPrimary else EmochiTextMuted,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Text(
-                            text = "Kitaplar",
-                            color = if (isBooksSelected) EmochiPrimary else EmochiTextMuted,
-                            fontSize = 10.5.sp,
-                            fontWeight = if (isBooksSelected) FontWeight.Bold else FontWeight.Medium,
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
+                        }
                     }
                 }
             }
@@ -394,10 +508,17 @@ fun BotListScreen(
                 .padding(innerPadding)
                 .statusBarsPadding()
         ) {
+            val tabOrder = listOf("discover", "chats", "templates", "books")
             AnimatedContent(
                 targetState = activeTab,
                 transitionSpec = {
-                    fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(220))
+                    val fromIdx = tabOrder.indexOf(initialState)
+                    val toIdx   = tabOrder.indexOf(targetState)
+                    val dir     = if (toIdx > fromIdx) 1 else -1
+                    (slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it * dir } +
+                        fadeIn(tween(280))) togetherWith
+                    (slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { it * -dir } +
+                        fadeOut(tween(180)))
                 },
                 modifier = Modifier.weight(1f)
             ) { tab ->
@@ -482,6 +603,41 @@ fun TopHeader(
     botCount: Int,
     onOpenSettings: () -> Unit
 ) {
+    val infinite = rememberInfiniteTransition(label = "header")
+
+    // Shimmer sweep for title text
+    val shimmerX by infinite.animateFloat(
+        initialValue = -300f,
+        targetValue = 600f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2800, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmerX"
+    )
+
+    // Settings ring slow rotation
+    val settingsRing by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(8000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "settingsRing"
+    )
+
+    // Greeting pulse alpha
+    val greetAlpha by infinite.animateFloat(
+        initialValue = 0.55f,
+        targetValue = 0.90f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "greetAlpha"
+    )
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -493,62 +649,183 @@ fun TopHeader(
             verticalAlignment = Alignment.Top
         ) {
             Column {
+                // Greeting — breathing alpha
                 Text(
-                    text = "👋 Hoş geldin, Aiden",
-                    color = EmochiTextSecondary,
-                    fontSize = 14.sp,
+                    text = "👋 Hoş geldin",
+                    color = EmochiTextSecondary.copy(alpha = greetAlpha),
+                    fontSize = 13.5.sp,
                     fontWeight = FontWeight.Medium
                 )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = when (activeTab) {
-                        "templates" -> "Şablonlar"
-                        "discover" -> "Keşfet"
-                        "books" -> "Kitaplar"
-                        else -> "Botlarım"
-                    },
-                    color = Color.White,
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.ExtraBold
+                Spacer(modifier = Modifier.height(3.dp))
+
+                // Title with shimmer brush
+                val titleText = when (activeTab) {
+                    "templates" -> "Şablonlar"
+                    "discover"  -> "Keşfet"
+                    "books"     -> "Kitaplar"
+                    else        -> "Botlarım"
+                }
+                androidx.compose.ui.layout.Layout(
+                    content = {
+                        // Invisible reference text for measuring
+                        Text(
+                            text = titleText,
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.graphicsLayer { alpha = 0f }
+                        )
+                        // Shimmer-brushed title
+                        Text(
+                            text = titleText,
+                            style = androidx.compose.ui.text.TextStyle(
+                                brush = Brush.horizontalGradient(
+                                    colors = listOf(
+                                        Color.White,
+                                        Color(0xFFE9D5FF),
+                                        Color.White,
+                                        Color(0xFFC084FC),
+                                        Color.White
+                                    ),
+                                    startX = shimmerX,
+                                    endX   = shimmerX + 400f
+                                ),
+                                fontSize = 30.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        )
+                    }
+                ) { measurables, constraints ->
+                    val ref = measurables[0].measure(constraints)
+                    val shimmerText = measurables[1].measure(constraints)
+                    layout(ref.width, ref.height) {
+                        shimmerText.placeRelative(0, 0)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Status badge — pulsing live dot + animated border
+                val dotPulse by infinite.animateFloat(
+                    initialValue = 0.5f, targetValue = 1.0f,
+                    animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                    label = "dotPulse"
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                // Purple Chip
+                val dotScale by infinite.animateFloat(
+                    initialValue = 0.85f, targetValue = 1.2f,
+                    animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                    label = "dotScale"
+                )
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(12.dp))
-                        .background(AppColors.CardMidnight)
-                        .border(1.dp, Color(0x40A78BFA), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(Color(0xFF1A0D3A), Color(0xFF0F0826))
+                            )
+                        )
+                        .border(
+                            BorderStroke(
+                                1.dp,
+                                Brush.linearGradient(
+                                    listOf(Color(0xFF9333EA), Color(0xFF4C1D95), Color(0xFF7C3AED))
+                                )
+                            ),
+                            RoundedCornerShape(12.dp)
+                        )
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
                 ) {
-                    Text(
-                        text = when (activeTab) {
-                            "templates" -> "✦ Şablonlar • Gemini 2.5 Flash"
-                            "discover" -> "✦ Keşfet • Gemini 2.5 Flash"
-                            "books" -> "✦ Kitaplar • Gemini 2.5 Flash"
-                            else -> "✦ $botCount bot • Gemini 2.5 Flash"
-                        },
-                        color = AppColors.PrimaryViolet,
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Pulsing live dot — outer glow ring + inner dot
+                        Box(
+                            modifier = Modifier.size(12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // Outer glow ring
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer { scaleX = dotScale; scaleY = dotScale; alpha = dotPulse * 0.5f }
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF22C55E).copy(alpha = 0.4f))
+                            )
+                            // Inner solid dot
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        Brush.radialGradient(
+                                            listOf(Color(0xFF86EFAC), Color(0xFF22C55E))
+                                        )
+                                    )
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = when (activeTab) {
+                                "templates" -> "Şablonlar • Gemini 2.5 Flash"
+                                "discover"  -> "Keşfet • Gemini 2.5 Flash"
+                                "books"     -> "Kitaplar • Gemini 2.5 Flash"
+                                else        -> "$botCount bot aktif • Gemini 2.5 Flash"
+                            },
+                            color = AppColors.PrimaryViolet,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
 
-            IconButton(
-                onClick = onOpenSettings,
-                modifier = Modifier
-                    .size(46.dp)
-                    .clip(CircleShape)
-                    .background(AppColors.Hex_141029)
-                    .border(1.dp, Color(0x20A78BFA), CircleShape)
-                    .testTag("global_settings_button")
+            // Settings button — rotating ring border
+            Box(
+                modifier = Modifier.size(50.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    Icons.Default.Settings,
-                    contentDescription = "Ayarlar",
-                    tint = AppColors.PrimaryPurple,
-                    modifier = Modifier.size(20.dp)
+                // Rotating outer ring
+                Box(
+                    modifier = Modifier
+                        .size(50.dp)
+                        .graphicsLayer { rotationZ = settingsRing }
+                        .clip(CircleShape)
+                        .border(
+                            BorderStroke(
+                                1.5.dp,
+                                Brush.sweepGradient(
+                                    listOf(
+                                        Color.Transparent,
+                                        AppColors.PrimaryViolet.copy(alpha = 0.8f),
+                                        Color(0xFFC084FC),
+                                        Color.Transparent,
+                                        Color.Transparent,
+                                        Color.Transparent
+                                    )
+                                )
+                            ),
+                            CircleShape
+                        )
                 )
+                // Inner button
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.radialGradient(
+                                listOf(Color(0xFF1E1145), Color(0xFF0D0820))
+                            )
+                        )
+                        .border(1.dp, Color(0x30A78BFA), CircleShape)
+                        .clickable { onOpenSettings() }
+                        .testTag("global_settings_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = "Ayarlar",
+                        tint = AppColors.PrimaryViolet,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
     }
@@ -619,26 +896,44 @@ fun ChatsTabContent(
         // 2. Search & Filters Section
         item(key = "search_and_filters") {
             Column(modifier = Modifier.fillMaxWidth()) {
-                // Search Input
+                // Search Input — focus-aware animated border
+                val searchFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+                var isSearchFocused by remember { mutableStateOf(false) }
+                val searchBorderAlpha by animateFloatAsState(
+                    targetValue = if (isSearchFocused) 1f else 0.45f,
+                    animationSpec = tween(250),
+                    label = "searchBorder"
+                )
+                val searchBgAlpha by animateFloatAsState(
+                    targetValue = if (isSearchFocused) 0xFF.toFloat() else 0x90.toFloat(),
+                    animationSpec = tween(250),
+                    label = "searchBg"
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(18.dp))
-                        .background(Color(0x900E061E))
+                        .background(Color(0x900E061E).copy(alpha = searchBgAlpha / 255f))
                         .border(
                             BorderStroke(
-                                1.2.dp,
-                                Brush.linearGradient(listOf(Color(0x60C084FC), Color(0x203B0764)))
+                                if (isSearchFocused) 1.5.dp else 1.2.dp,
+                                Brush.linearGradient(
+                                    listOf(
+                                        Color(0xFFC084FC).copy(alpha = searchBorderAlpha),
+                                        Color(0xFF7C3AED).copy(alpha = searchBorderAlpha * 0.7f),
+                                        Color(0xFF4C1D95).copy(alpha = searchBorderAlpha * 0.5f)
+                                    )
+                                )
                             ),
                             RoundedCornerShape(18.dp)
                         )
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                        .padding(horizontal = 14.dp, vertical = 11.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         imageVector = Icons.Default.Search,
                         contentDescription = "Ara",
-                        tint = AppColors.PrimaryPurple,
+                        tint = if (isSearchFocused) Color(0xFFCDA8FF) else AppColors.PrimaryPurple,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(10.dp))
@@ -646,7 +941,7 @@ fun ChatsTabContent(
                         if (searchQuery.isEmpty()) {
                             Text(
                                 text = "Bot veya evren ara...",
-                                color = AppColors.Hex_7E739B,
+                                color = AppColors.Hex_7E739B.copy(alpha = 0.7f),
                                 fontSize = 14.sp
                             )
                         }
@@ -662,22 +957,41 @@ fun ChatsTabContent(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("search_bot_field")
+                                .onFocusChanged { isSearchFocused = it.isFocused }
                         )
                     }
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0x601A1033))
-                            .border(1.dp, Color(0x40A855F7), RoundedCornerShape(10.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Speed,
-                            contentDescription = "Filtrele",
-                            tint = AppColors.PrimaryViolet,
-                            modifier = Modifier.size(16.dp)
-                        )
+                    if (searchQuery.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x30A855F7))
+                                .clickable { onSearchQueryChange("") },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Temizle",
+                                tint = Color(0xFFCDA8FF),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0x601A1033))
+                                .border(1.dp, Color(0x40A855F7), RoundedCornerShape(10.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Speed,
+                                contentDescription = "Filtrele",
+                                tint = AppColors.PrimaryViolet,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
 
@@ -698,14 +1012,23 @@ fun ChatsTabContent(
                         val isSelected = selectedFilter == key
                         val shape = RoundedCornerShape(16.dp)
 
+                        // Animated scale on selection
+                        val chipScale by androidx.compose.animation.core.animateFloatAsState(
+                            targetValue = if (isSelected) 1.04f else 1f,
+                            animationSpec = tween(180, easing = FastOutSlowInEasing),
+                            label = "chipScale_$key"
+                        )
+                        // Animated icon tint alpha
+                        val contentAlpha by androidx.compose.animation.core.animateFloatAsState(
+                            targetValue = if (isSelected) 1f else 0.65f,
+                            animationSpec = tween(200),
+                            label = "chipAlpha_$key"
+                        )
+
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .then(
-                                    if (isSelected) {
-                                        Modifier.border(3.dp, Color(0x30A855F7), shape)
-                                    } else Modifier
-                                )
+                                .graphicsLayer { scaleX = chipScale; scaleY = chipScale }
                                 .clip(shape)
                                 .background(
                                     if (isSelected) {
@@ -744,13 +1067,13 @@ fun ChatsTabContent(
                                 Icon(
                                     imageVector = icon,
                                     contentDescription = null,
-                                    tint = if (isSelected) Color.White else AppColors.PrimaryPurple,
+                                    tint = (if (isSelected) Color.White else AppColors.PrimaryPurple).copy(alpha = contentAlpha),
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = label,
-                                    color = if (isSelected) Color.White else AppColors.PrimaryPurple,
+                                    color = (if (isSelected) Color.White else AppColors.PrimaryPurple).copy(alpha = contentAlpha),
                                     fontSize = 11.5.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
                                     maxLines = 1,
@@ -769,23 +1092,70 @@ fun ChatsTabContent(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 40.dp),
+                        .padding(vertical = 32.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        OrbView(hue = 275f, size = 56.dp)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Henüz bir sohbet veya bot yok.",
-                            color = EmochiTextSecondary,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "Aşağıdaki (+) butonuna dokunarak yeni bir karakter veya evren yazın.",
-                            color = EmochiTextMuted,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(Color(0xFF130B2E), Color(0xFF0C0720))
+                                )
+                            )
+                            .border(
+                                BorderStroke(
+                                    1.5.dp,
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFF9333EA), Color(0xFF4C1D95), Color(0xFF7C3AED))
+                                    )
+                                ),
+                                RoundedCornerShape(24.dp)
+                            )
+                            .padding(28.dp)
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(80.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        Brush.radialGradient(
+                                            listOf(Color(0xFF7C3AED), Color(0xFF3B1070), Color(0xFF1A0840))
+                                        )
+                                    )
+                                    .border(
+                                        BorderStroke(
+                                            2.dp,
+                                            Brush.sweepGradient(
+                                                listOf(Color(0xFFA855F7), Color(0xFF6D28D9), Color(0xFFC084FC), Color(0xFFA855F7))
+                                            )
+                                        ),
+                                        CircleShape
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                OrbView(hue = 275f, size = 56.dp)
+                            }
+                            Text(
+                                text = "Henüz hiç karakter yok",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = "Aşağıdaki (+) butonuna dokun, harika bir karakter veya evren yarat.",
+                                color = AppColors.TextMuted,
+                                fontSize = 12.5.sp,
+                                textAlign = TextAlign.Center,
+                                lineHeight = 18.sp
+                            )
+                        }
                     }
                 }
             }
@@ -794,15 +1164,37 @@ fun ChatsTabContent(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 30.dp),
+                        .padding(vertical = 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "Aramanıza uygun sohbet bulunamadı.",
-                            color = EmochiTextSecondary,
-                            fontSize = 14.sp
-                        )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color(0xFF130B28))
+                            .border(
+                                BorderStroke(
+                                    1.dp,
+                                    Brush.linearGradient(
+                                        listOf(Color(0x60A855F7), Color(0x306D28D9))
+                                    )
+                                ),
+                                RoundedCornerShape(16.dp)
+                            )
+                            .padding(20.dp)
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text("🔍", fontSize = 28.sp)
+                            Text(
+                                text = "Aramanıza uygun sonuç bulunamadı.",
+                                color = Color(0xFFCDA8FF),
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
             }
@@ -966,60 +1358,60 @@ fun BotCardItem(
     var isMenuExpanded by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
 
-    // --- Rich Card Animations ---
-    val infiniteTransition = rememberInfiniteTransition(label = "cardAnimations_${bot.id}")
-    
+    // Press scale animation
+    val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val cardScale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (isPressed) 0.974f else 1f,
+        animationSpec = tween(110, easing = FastOutSlowInEasing),
+        label = "cardPressScale"
+    )
+
+    // Per-bot phase offset — her kart kendi ritminde soluklanır
+    val animOffset = remember(bot.id) { (bot.id.hashCode().and(0xFF)) / 255f }
+    val infiniteTransition = rememberInfiniteTransition(label = "cardAnim_${bot.id}")
     val cardGlowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.25f,
-        targetValue = 0.75f,
+        initialValue = 0.12f + animOffset * 0.08f,
+        targetValue = 0.48f + animOffset * 0.08f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = FastOutSlowInEasing),
+            animation = tween(2800 + (animOffset * 800).toInt(), easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "cardGlowAlpha"
     )
-
-    val buttonPulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.97f,
-        targetValue = 1.03f,
+    // Avatar pulse ring — yavaş dönen parlak ring
+    val avatarRingRotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
+            animation = tween(6000 + (animOffset * 2000).toInt(), easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
         ),
-        label = "buttonPulseScale"
+        label = "avatarRing"
     )
 
     val cardShape = RoundedCornerShape(22.dp)
 
-    // Glassmorphic Card Container with multi-layered breathing neon glow
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .border(3.5.dp, Color(0xA08B5CF6).copy(alpha = cardGlowAlpha * 0.5f), cardShape)
+            .graphicsLayer { scaleX = cardScale; scaleY = cardScale }
+            .border(BorderStroke(1.5.dp, EmochiGradients.cardBorder), cardShape)
             .clip(cardShape)
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0x8523104D), // Semi-transparent dark violet top
-                        Color(0x950E0620)  // Deep dark purple bottom
-                    )
-                )
-            )
+            .background(EmochiGradients.cardBackground)
             .border(
                 BorderStroke(
-                    width = 1.3.dp,
+                    width = 3.dp,
                     brush = Brush.linearGradient(
-                        colors = listOf(
-                            AppColors.PurpleLight, // Crisp bright lila top-left
-                            AppColors.PrimaryViolet, // Glowing neon violet
-                            AppColors.DeepPurple, // Purple
-                            AppColors.PurpleDarker  // Deep violet bottom-right
+                        listOf(
+                            Color(0xFF7C3AED).copy(alpha = cardGlowAlpha * 0.35f),
+                            Color(0xFF4C1D95).copy(alpha = cardGlowAlpha * 0.15f)
                         )
                     )
                 ),
-                shape = cardShape
+                cardShape
             )
-            .clickable { onOpenBot(bot.id) }
+            .clickable(interactionSource = interactionSource, indication = null) { onOpenBot(bot.id) }
             .testTag("bot_card_${bot.id}")
             .padding(16.dp)
     ) {
@@ -1032,20 +1424,37 @@ fun BotCardItem(
                 Box(modifier = Modifier.padding(top = 2.dp)) {
                     val avatarShape = if (isUniverse) RoundedCornerShape(20.dp) else CircleShape
 
+                    // Rotating glow ring behind avatar
+                    Box(
+                        modifier = Modifier
+                            .size(82.dp)
+                            .graphicsLayer { rotationZ = avatarRingRotation }
+                            .clip(avatarShape)
+                            .border(
+                                width = 2.5.dp,
+                                brush = Brush.sweepGradient(
+                                    listOf(
+                                        Color.Transparent,
+                                        AppColors.PurpleLight.copy(alpha = 0.9f),
+                                        AppColors.PrimaryViolet,
+                                        AppColors.PurpleAccent,
+                                        Color.Transparent,
+                                        Color.Transparent,
+                                        AppColors.PurpleLight.copy(alpha = 0.4f),
+                                        Color.Transparent
+                                    )
+                                ),
+                                shape = avatarShape
+                            )
+                    ) {}
+
                     Box(
                         modifier = Modifier
                             .size(76.dp)
                             .clip(avatarShape)
                             .border(
-                                width = 2.dp,
-                                brush = Brush.sweepGradient(
-                                    listOf(
-                                        AppColors.PurpleLight,
-                                        AppColors.PrimaryViolet,
-                                        AppColors.PurpleAccent,
-                                        AppColors.PurpleLight
-                                    )
-                                ),
+                                width = 1.5.dp,
+                                brush = Brush.sweepGradient(EmochiGradients.avatarBorderSweep),
                                 shape = avatarShape
                             )
                             .padding(2.5.dp),
@@ -1073,13 +1482,12 @@ fun BotCardItem(
                                 )
                             }
                             bot.avatarUrl.isNotBlank() -> {
-                                AsyncImage(
-                                    model = bot.avatarUrl,
+                                com.example.ui.components.BotAvatarImage(
+                                    avatarUrl = bot.avatarUrl,
                                     contentDescription = displayName,
                                     contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .clip(avatarShape)
+                                    modifier = Modifier.fillMaxSize().clip(avatarShape),
+                                    fallback = { OrbView(hue = hue, size = 64.dp) }
                                 )
                             }
                             else -> {
@@ -1115,20 +1523,30 @@ fun BotCardItem(
 
                             if (!isUniverse) {
                                 Spacer(modifier = Modifier.width(8.dp))
-
-                                // Character badge
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(Color(0x351F0E3D))
-                                        .border(1.dp, Color(0x808B5CF6), RoundedCornerShape(8.dp))
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(Color(0xFF1F0E3D), Color(0xFF120826))
+                                            )
+                                        )
+                                        .border(
+                                            BorderStroke(
+                                                1.dp,
+                                                Brush.linearGradient(
+                                                    listOf(Color(0xFFA855F7), Color(0xFF6D28D9))
+                                                )
+                                            ),
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .padding(horizontal = 9.dp, vertical = 3.dp)
                                 ) {
                                     Text(
-                                        text = "Karakter",
-                                        color = AppColors.PrimaryViolet,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
+                                        text = "✦ Karakter",
+                                        color = Color(0xFFCDA8FF),
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.ExtraBold
                                     )
                                 }
                             }
@@ -1173,49 +1591,99 @@ fun BotCardItem(
                                 DropdownMenu(
                                     expanded = isMenuExpanded,
                                     onDismissRequest = { isMenuExpanded = false },
-                                    modifier = Modifier.background(AppColors.CardDeep)
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(
+                                            Brush.verticalGradient(
+                                                listOf(Color(0xFF1A0D3A), Color(0xFF100826))
+                                            )
+                                        )
+                                        .border(
+                                            BorderStroke(
+                                                1.dp,
+                                                Brush.linearGradient(
+                                                    listOf(Color(0xFF6D28D9), Color(0xFF4C1D95), Color(0xFF7C3AED))
+                                                )
+                                            ),
+                                            RoundedCornerShape(16.dp)
+                                        )
                                 ) {
                                     if (onTogglePrivacy != null && !isTemplate) {
                                         DropdownMenuItem(
                                             text = {
-                                                Text(
-                                                    text = if (bot.isPublic) "🔒 Özel Yap" else "🌐 Herkese Açık Yap",
-                                                    color = Color.White,
-                                                    fontSize = 13.sp
-                                                )
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(if (bot.isPublic) "🔒" else "🌐", fontSize = 14.sp)
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Text(
+                                                        text = if (bot.isPublic) "Özel Yap" else "Herkese Açık Yap",
+                                                        color = Color(0xFFE2D5FF),
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                }
                                             },
                                             onClick = {
                                                 isMenuExpanded = false
                                                 onTogglePrivacy.invoke(bot.copy(isPublic = !bot.isPublic))
-                                            }
+                                            },
+                                            modifier = Modifier.padding(horizontal = 4.dp)
+                                        )
+                                        // Divider
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(0.8.dp)
+                                                .padding(horizontal = 12.dp)
+                                                .background(Color(0x30A855F7))
                                         )
                                     }
                                     if (onCloneBot != null) {
                                         DropdownMenuItem(
                                             text = {
                                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text("📋", fontSize = 13.sp)
-                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text("📋", fontSize = 14.sp)
+                                                    Spacer(modifier = Modifier.width(8.dp))
                                                     Text(
                                                         text = "Botu Kopyala",
-                                                        color = Color.White,
-                                                        fontSize = 13.sp
+                                                        color = Color(0xFFE2D5FF),
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Medium
                                                     )
                                                 }
                                             },
                                             onClick = {
                                                 isMenuExpanded = false
                                                 onCloneBot.invoke(bot.id)
-                                            }
+                                            },
+                                            modifier = Modifier.padding(horizontal = 4.dp)
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(0.8.dp)
+                                                .padding(horizontal = 12.dp)
+                                                .background(Color(0x30A855F7))
                                         )
                                     }
                                     if (onDeleteBot != null) {
                                         DropdownMenuItem(
-                                            text = { Text("Sil", color = EmochiError, fontSize = 13.sp) },
+                                            text = {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text("🗑️", fontSize = 14.sp)
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Text(
+                                                        text = "Sil",
+                                                        color = EmochiError,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                }
+                                            },
                                             onClick = {
                                                 isMenuExpanded = false
                                                 showDeleteConfirmDialog = true
-                                            }
+                                            },
+                                            modifier = Modifier.padding(horizontal = 4.dp)
                                         )
                                     }
                                 }
@@ -1225,35 +1693,79 @@ fun BotCardItem(
 
                     if (isUniverse) {
                         Spacer(modifier = Modifier.height(4.dp))
-                        // Universe badge on its own row matching screenshot
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0x351F0E3D))
-                                .border(1.dp, Color(0x808B5CF6), RoundedCornerShape(8.dp))
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFF1A0D3A), Color(0xFF0D0820))
+                                    )
+                                )
+                                .border(
+                                    BorderStroke(
+                                        1.dp,
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF7C3AED), Color(0xFF4C1D95), Color(0xFF9333EA))
+                                        )
+                                    ),
+                                    RoundedCornerShape(8.dp)
+                                )
+                                .padding(horizontal = 9.dp, vertical = 3.dp)
                         ) {
                             Text(
-                                text = "Evren",
-                                color = AppColors.PrimaryViolet,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                                text = "🌌 Evren",
+                                color = Color(0xFFCDA8FF),
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.ExtraBold
                             )
                         }
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    Text(
-                        text = bot.scenario.ifBlank { bot.openingMessage },
-                        color = AppColors.Hex_E2D9F3,
-                        fontSize = 13.5.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 18.sp
-                    )
+                    // Description with gradient fade at bottom instead of hard ellipsis
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 42.dp)
+                    ) {
+                        Text(
+                            text = bot.scenario.ifBlank { bot.openingMessage },
+                            color = AppColors.Hex_E2D9F3,
+                            fontSize = 13.5.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Clip,
+                            lineHeight = 18.sp
+                        )
+                        // Soft gradient fade at bottom
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(18.dp)
+                                .align(Alignment.BottomCenter)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(Color.Transparent, Color(0xFF13082A).copy(alpha = 0.85f))
+                                    )
+                                )
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(14.dp))
+
+                    // Thin separator
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(0.8.dp)
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color.Transparent, Color(0x35A855F7), Color.Transparent)
+                                )
+                            )
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     // Bottom info & Action Row
                     Row(
@@ -1261,81 +1773,101 @@ fun BotCardItem(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Active time status on bottom left
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        // Active time badge — pill style
+                        val stableActiveTime = remember(bot.id) {
+                            val raw = (bot.id.hashCode() % 24).let { if (it < 0) -it else it } + 1
+                            if (raw < 5) "$raw sa. önce"
+                            else if (raw < 12) "bugün aktif"
+                            else "${raw / 12}g önce"
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF110A28))
+                                .border(
+                                    BorderStroke(
+                                        0.8.dp,
+                                        Brush.linearGradient(
+                                            listOf(Color(0x40A855F7), Color(0x206B21A8))
+                                        )
+                                    ),
+                                    RoundedCornerShape(10.dp)
+                                )
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
                         ) {
-                            val stableActiveTime = remember(bot.id) {
-                                val raw = (bot.id.hashCode() % 24).let { if (it < 0) -it else it } + 1
-                                if (raw < 5) "$raw saat önce aktif"
-                                else if (raw < 12) "bugün aktif"
-                                else "${raw / 12} gün önce aktif"
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(5.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF86EFAC))
+                                )
+                                Text(
+                                    text = stableActiveTime,
+                                    color = AppColors.PrimaryPurple,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
                             }
-                            Text("🕒", fontSize = 11.sp)
-                            Text(
-                                text = stableActiveTime,
-                                color = AppColors.PrimaryPurple,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
                         }
 
-                    // Play/Action Button on bottom right with multi-layered neon glow & pulse animation
-                    Box(
-                        modifier = Modifier
-                            .graphicsLayer {
-                                scaleX = buttonPulseScale
-                                scaleY = buttonPulseScale
-                            }
-                            // Outer glowing halo
-                            .border(
-                                width = 3.dp,
-                                color = Color(0x70C084FC).copy(alpha = cardGlowAlpha * 0.8f),
-                                shape = RoundedCornerShape(14.dp)
-                            )
-                            .clip(RoundedCornerShape(14.dp))
-                            .border(
-                                BorderStroke(
-                                    width = 1.5.dp,
-                                    brush = Brush.linearGradient(
-                                        listOf(AppColors.PurpleLight, AppColors.PrimaryViolet, AppColors.PurpleDark)
+                        // Sohbet Et / Aç button — premium press effect
+                        val btnInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                        val btnPressed by btnInteraction.collectIsPressedAsState()
+                        val btnScale by androidx.compose.animation.core.animateFloatAsState(
+                            targetValue = if (btnPressed) 0.93f else 1f,
+                            animationSpec = tween(90, easing = FastOutSlowInEasing),
+                            label = "btnScale"
+                        )
+                        Box(
+                            modifier = Modifier
+                                .graphicsLayer { scaleX = btnScale; scaleY = btnScale }
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFFBB7BFF), Color(0xFF9333EA), Color(0xFF5B21B6))
                                     )
-                                ),
-                                shape = RoundedCornerShape(14.dp)
-                            )
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(AppColors.PurpleDeep, AppColors.PurpleAbyss)
                                 )
-                            )
-                            .clickable { onOpenBot(bot.id) }
-                            .padding(horizontal = 14.dp, vertical = 8.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
+                                .border(
+                                    BorderStroke(
+                                        1.5.dp,
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFFE9D5FF), Color(0xFFA855F7), Color(0xFF7C3AED))
+                                        )
+                                    ),
+                                    RoundedCornerShape(14.dp)
+                                )
+                                .clickable(
+                                    interactionSource = btnInteraction,
+                                    indication = null
+                                ) { onOpenBot(bot.id) }
+                                .padding(horizontal = 16.dp, vertical = 9.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = if (isUniverse) "Aç" else "Sohbet Et",
-                                color = Color.White,
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = if (isUniverse) "Aç" else "Sohbet Et",
+                                    color = Color.White,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.3.sp,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
-                    }
                     }
                 }
             }
@@ -1494,16 +2026,7 @@ fun ExploreTabContent(
         label = "exploreGlowAlpha"
     )
 
-    val buttonPulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.97f,
-        targetValue = 1.03f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "exploreButtonPulse"
-    )
-
+    
     LazyColumn(
         modifier = Modifier
             .fillMaxWidth()
@@ -1694,26 +2217,18 @@ fun ExploreTabContent(
 
                         Spacer(modifier = Modifier.width(8.dp))
 
-                        // Right-aligned glowing circle button with arrow
+                        // Right-aligned circle button with arrow
                         Box(
                             modifier = Modifier
                                 .size(42.dp)
-                                .graphicsLayer {
-                                    scaleX = buttonPulseScale
-                                    scaleY = buttonPulseScale
-                                }
                                 .clip(CircleShape)
-                                .background(
-                                    Brush.radialGradient(
-                                        listOf(AppColors.PurpleAbyss, AppColors.Hex_140D2D)
-                                    )
-                                )
+                                .background(EmochiGradients.primaryButtonVertical)
                                 .border(
-                                    width = 1.5.dp,
-                                    brush = Brush.sweepGradient(
-                                        listOf(AppColors.PurpleLight, AppColors.PrimaryViolet, AppColors.PurpleAccent, AppColors.PurpleLight)
+                                    BorderStroke(
+                                        1.5.dp,
+                                        Brush.sweepGradient(EmochiGradients.avatarBorderSweep)
                                     ),
-                                    shape = CircleShape
+                                    CircleShape
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
@@ -1855,29 +2370,11 @@ fun ExploreTabContent(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .graphicsLayer {
-                                        scaleX = buttonPulseScale
-                                        scaleY = buttonPulseScale
-                                    }
                                     .clip(RoundedCornerShape(14.dp))
+                                    .background(EmochiGradients.primaryButton)
                                     .border(
-                                        BorderStroke(
-                                            width = 1.3.dp,
-                                            brush = Brush.sweepGradient(
-                                                listOf(
-                                                    AppColors.PurpleLight,
-                                                    AppColors.PrimaryViolet,
-                                                    AppColors.PurpleAccent,
-                                                    AppColors.PurpleLight
-                                                )
-                                            )
-                                        ),
-                                        shape = RoundedCornerShape(14.dp)
-                                    )
-                                    .background(
-                                        Brush.horizontalGradient(
-                                            listOf(AppColors.PurpleDarkest, AppColors.PurpleAbyss)
-                                        )
+                                        BorderStroke(1.dp, EmochiGradients.chatBubbleUserBorder),
+                                        RoundedCornerShape(14.dp)
                                     )
                                     .clickable {
                                         val newBot = preset.copy(
@@ -3619,160 +4116,64 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
         }
     }
 
+    val booksInfinite = rememberInfiniteTransition(label = "booksAnim")
+    val booksDrift by booksInfinite.animateFloat(0f, 1f,
+        infiniteRepeatable(tween(20000, easing = LinearEasing)), label = "bd")
+    val shimmerOffset by booksInfinite.animateFloat(-1f, 2f,
+        infiniteRepeatable(tween(2200, easing = LinearEasing)), label = "sh")
+    val featuredGlow by booksInfinite.animateFloat(0.5f, 1f,
+        infiniteRepeatable(tween(1400), RepeatMode.Reverse), label = "fg")
+
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Library Header
+        // ── ANIMASYONLU KÜTÜPHANE HEADER ─────────────────────────────
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Text(
-                        text = if (isEnglish) "📚 Interactive Books Library" else "📚 İnteraktif Kitaplar Kütüphanesi",
-                        color = Color.White,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = if (isEnglish) "Choose your path and shape the narrative in real-time" else "Kendi seçimlerinle hikayenin gidişatını ve kaderini yönet",
-                        color = AppColors.TextMuted,
-                        fontSize = 13.sp
-                    )
-                }
-            }
-        }
-
-        // FEATURED MAIN BOOK CARD
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = AppColors.CardDeepNavy),
-                shape = RoundedCornerShape(20.dp),
-                border = androidx.compose.foundation.BorderStroke(1.5.dp, Brush.linearGradient(listOf(AppColors.PrimaryPurple, AppColors.Blue))),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp)
-                ) {
-                    // Top Badge Row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(AppColors.Hex_31105C)
-                                .border(1.dp, AppColors.PrimaryPurple, RoundedCornerShape(10.dp))
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = "📖 " + (if (isEnglish) "FEATURED NOVEL • CHAPTER 1" else "ÖNE ÇIKAN İNTERAKTİF ROMAN • BÖLÜM 1"),
-                                color = AppColors.PurpleLight,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+            Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))) {
+                // Nebula arka plan
+                Canvas(modifier = Modifier.fillMaxWidth().height(100.dp)) {
+                    drawRect(Color(0xFF08061A))
+                    listOf(Triple(0.2f, 0.5f, Color(0xFF1A0A2E)), Triple(0.75f, 0.4f, Color(0xFF0A1A2E))).forEach { (bx, by, col) ->
+                        val cx = size.width * (bx + kotlin.math.sin(booksDrift * 2 * Math.PI.toFloat()) * 0.06f)
+                        val cy = size.height * (by + kotlin.math.cos(booksDrift * 2 * Math.PI.toFloat()) * 0.08f)
+                        drawCircle(col.copy(0.8f), size.minDimension * 0.6f, Offset(cx, cy), blendMode = BlendMode.Screen)
                     }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    // Title & Character Info
-                    Text(
-                        text = "Kozmik Sürükleniş | MCU Evreni",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "⚡ Karakter: Aiden Blackwood (25) • Işınlanma & Görüler",
-                        color = AppColors.PrimaryPurple,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Synopsis
-                    Text(
-                        text = if (isEnglish)
-                            "Beş yaşında mavi ışıkla ailesini kaybeden Aiden, 20 yıldır kaçıyor. Avengers oylaması, S.H.I.E.L.D. takibi ve zihinsel görüler arasında kendi kararlarınla kaderi belirle."
-                        else
-                            "Beş yaşında mavi ışıkla ailesini kaybeden Aiden Blackwood, 20 yıldır kaçıyor. S.H.I.E.L.D. onun peşinde, Avengers toplantısında 'Aday' olarak oylanıyor. Seçimlerinle hikayeyi ve ilişkileri yönlendir.",
-                        color = AppColors.TextSecondary,
-                        fontSize = 13.5.sp,
-                        lineHeight = 19.sp
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Action Buttons Row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Button(
-                            onClick = {
-                                val progress = ChapterProgressManager.getUnlockedChapter(context, "preset_aiden_mcu_cosmic")
-                                if (progress == 0 && !isBookExisting) {
-                                    ChapterProgressManager.saveUnlockedChapter(context, "preset_aiden_mcu_cosmic", 1)
-                                    onImportPresetBot(presetMcuBook)
-                                    onOpenBot("preset_aiden_mcu_cosmic")
-                                } else {
-                                    showChapterModal = true
+                }
+                // Shimmer başlık + stat badge'ler
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp)) {
+                    // Shimmer başlık
+                    Box {
+                        val shimmerBrush = Brush.linearGradient(
+                            listOf(Color(0xFFC4B5FD), Color(0xFFFFFFFF), Color(0xFF7C3AED), Color(0xFFA78BFA)),
+                            start = Offset(shimmerOffset * 400f, 0f),
+                            end = Offset(shimmerOffset * 400f + 200f, 0f)
+                        )
+                        Text(if (isEnglish) "📚 Interactive Library" else "📚 Etkileşimli Kütüphane",
+                            color = Color.Transparent, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.drawWithCache {
+                                onDrawWithContent {
+                                    drawContent()
+                                    drawRect(shimmerBrush, blendMode = BlendMode.SrcAtop)
                                 }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = EmochiPrimary),
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.MenuBook,
-                                contentDescription = "Oku",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (isBookExisting) (if (isEnglish) "📖 Read / Continue" else "📖 Kitabı Oku / Devam Et") else (if (isEnglish) "📖 Start Interactive Book" else "📖 İnteraktif Kitaba Başla"),
-                                color = Color.White,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-
-                        if (isBookExisting) {
-                            IconButton(
-                                onClick = {
-                                    onDeleteBot("preset_aiden_mcu_cosmic")
-                                    android.widget.Toast.makeText(context, if (isEnglish) "Book deleted" else "Kitap silindi", android.widget.Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(AppColors.Hex_331422)
-                                    .border(1.dp, AppColors.RoseSoft, RoundedCornerShape(14.dp))
-                            ) {
-                                Icon(
-                                    imageVector = androidx.compose.material.icons.Icons.Default.Delete,
-                                    contentDescription = "Kitabı Sil",
-                                    tint = AppColors.RoseLight,
-                                    modifier = Modifier.size(22.dp)
-                                )
+                            })
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(if (isEnglish) "Shape the narrative with your choices" else "Seçimlerinle hikayenin kaderini belirle",
+                        color = Color(0xFF8B7CB0), fontSize = 12.sp)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    // Stat badge'ler
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(
+                            "📖 1 Kitap",
+                            "⚡ ${ChapterProgressManager.getUnlockedChapter(context, "preset_aiden_mcu_cosmic").let { if (it == 0) "Başlamadı" else "Bölüm $it" }}",
+                            "🔀 ${if (isBookExisting) "Devam Ediyor" else "Yeni"}"
+                        ).forEach { label ->
+                            Box(modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF1A1035))
+                                .border(1.dp, Color(0xFF2D1F50), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 10.dp, vertical = 5.dp)) {
+                                Text(label, color = Color(0xFFCDA8FF), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
@@ -3780,168 +4181,231 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
             }
         }
 
-        // Section for user's created/imported books
-        if (myBooks.isNotEmpty()) {
-            item {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = if (isEnglish) "📖 Your Active Books & Stories" else "📖 Okuduğun Kitaplar & Hikayeler",
-                    color = Color.White,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            items(myBooks, key = { it.id }) { bookBot ->
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = AppColors.CardDeepNavy),
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, Color(0x80A78BFA)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onOpenBot(bookBot.id) }
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clip(CircleShape)
-                                .background(AppColors.Hex_281C40),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("📖", fontSize = 20.sp)
+        // ── FEATURED BOOK CARD — Canvas yıldız + premium ────────────
+        item {
+            val featuredScale = remember { androidx.compose.animation.core.Animatable(0.95f) }
+            LaunchedEffect(Unit) { featuredScale.animateTo(1f, tween(500, easing = FastOutSlowInEasing)) }
+            val cardPressScale = remember { androidx.compose.animation.core.Animatable(1f) }
+            val cardScope = rememberCoroutineScope()
+            val unlockedChapter = remember { ChapterProgressManager.getUnlockedChapter(context, "preset_aiden_mcu_cosmic") }
+
+            Box(modifier = Modifier.fillMaxWidth()
+                .graphicsLayer { scaleX = featuredScale.value; scaleY = featuredScale.value }
+                .clip(RoundedCornerShape(22.dp))
+                .border(2.dp, Brush.linearGradient(listOf(
+                    Color(0xFF7C3AED).copy(alpha = featuredGlow),
+                    Color(0xFF3B82F6).copy(alpha = featuredGlow * 0.8f),
+                    Color(0xFF7C3AED).copy(alpha = featuredGlow)
+                )), RoundedCornerShape(22.dp))
+            ) {
+                // Canvas yıldız arkaplan
+                Canvas(modifier = Modifier.fillMaxWidth().height(260.dp)) {
+                    drawRect(Brush.linearGradient(listOf(Color(0xFF0D0820), Color(0xFF1A0D3A), Color(0xFF0A1020))))
+                    val rng = java.util.Random(42)
+                    repeat(60) {
+                        val sx = rng.nextFloat() * size.width
+                        val sy = rng.nextFloat() * size.height
+                        val ssize = rng.nextFloat() * 2.5f + 0.5f
+                        val alpha = rng.nextFloat() * 0.5f + 0.2f
+                        val pulse = kotlin.math.sin(booksDrift * 2 * Math.PI.toFloat() + it * 0.4f).toFloat() * 0.3f + 0.7f
+                        drawCircle(Color.White.copy(alpha = alpha * pulse), ssize, Offset(sx, sy))
+                    }
+                    // Nebula glow merkezde
+                    drawCircle(Color(0xFF7C3AED).copy(0.15f), size.minDimension * 0.7f,
+                        Offset(size.width * 0.3f, size.height * 0.4f), blendMode = BlendMode.Screen)
+                    drawCircle(Color(0xFF3B82F6).copy(0.1f), size.minDimension * 0.5f,
+                        Offset(size.width * 0.75f, size.height * 0.6f), blendMode = BlendMode.Screen)
+                    // Alt gradient fade
+                    drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color(0xFF0D0820)), 0f, size.height),
+                        topLeft = Offset(0f, size.height * 0.5f),
+                        size = androidx.compose.ui.geometry.Size(size.width, size.height * 0.5f))
+                }
+
+                Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+                    // Shimmer badge
+                    Box(modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                        .background(Brush.linearGradient(listOf(Color(0xFF2D1B50), Color(0xFF1A1035))))
+                        .border(1.dp, Color(0xFF7C3AED).copy(featuredGlow), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 10.dp, vertical = 4.dp)) {
+                        Text("✦ " + if (isEnglish) "FEATURED NOVEL" else "ÖNE ÇIKAN İNTERAKTİF ROMAN",
+                            color = Color(0xFFC4B5FD), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                    }
+                    Spacer(modifier = Modifier.height(110.dp)) // canvas alanı
+                    Text("Kozmik Sürükleniş | MCU Evreni",
+                        color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF1A1035)).padding(horizontal = 7.dp, vertical = 2.dp)) {
+                            Text("⚡ Aiden Blackwood", color = Color(0xFFA78BFA), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = bookBot.aiName,
-                                color = Color.White,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = bookBot.universeName.ifBlank { "İnteraktif Roman" },
-                                color = AppColors.PrimaryPurple,
-                                fontSize = 12.sp
-                            )
+                        Box(modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF0A1A20)).padding(horizontal = 7.dp, vertical = 2.dp)) {
+                            Text("🌌 MCU Evreni", color = Color(0xFF60A5FA), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = { onOpenBot(bookBot.id) },
-                            colors = ButtonDefaults.buttonColors(containerColor = AppColors.DeepPurple),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Text(
-                                text = if (isEnglish) "Continue" else "Devam Et",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("Beş yaşında mavi ışıkla ailesini kaybeden Aiden Blackwood, 20 yıldır kaçıyor. Seçimlerinle hikayeyi ve ilişkileri yönlendir.",
+                        color = Color(0xFFBBAAD8), fontSize = 13.sp, lineHeight = 19.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // İlerleme bar (3 bölüm)
+                    Column {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("İlerleme", color = Color(0xFF8B7CB0), fontSize = 11.sp)
+                            Text("Bölüm ${unlockedChapter.coerceAtLeast(0)} / 3", color = Color(0xFFA78BFA), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        IconButton(
-                            onClick = {
-                                onDeleteBot(bookBot.id)
-                                android.widget.Toast.makeText(context, if (isEnglish) "Book deleted" else "Kitap silindi", android.widget.Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(
-                                imageVector = androidx.compose.material.icons.Icons.Default.Delete,
-                                contentDescription = "Kitabı Sil",
-                                tint = AppColors.RoseLight,
-                                modifier = Modifier.size(20.dp)
-                            )
+                        Spacer(modifier = Modifier.height(5.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            repeat(3) { i ->
+                                val filled = i < unlockedChapter
+                                Box(modifier = Modifier.weight(1f).height(5.dp).clip(RoundedCornerShape(3.dp))
+                                    .background(if (filled)
+                                        Brush.linearGradient(listOf(Color(0xFF7C3AED), Color(0xFF4F46E5)))
+                                    else Brush.linearGradient(listOf(Color(0xFF1A1035), Color(0xFF1A1035)))))
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Butonlar
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val mainBtnScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                        val mainBtnScope = rememberCoroutineScope()
+                        Box(modifier = Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(14.dp))
+                            .background(Brush.linearGradient(listOf(Color(0xFF7C3AED), Color(0xFF4C1D95))))
+                            .graphicsLayer { scaleX = mainBtnScale.value; scaleY = mainBtnScale.value }
+                            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                                mainBtnScope.launch { mainBtnScale.animateTo(0.95f, tween(80)); mainBtnScale.animateTo(1f, tween(120)) }
+                                val progress = ChapterProgressManager.getUnlockedChapter(context, "preset_aiden_mcu_cosmic")
+                                if (progress == 0 && !isBookExisting) {
+                                    ChapterProgressManager.saveUnlockedChapter(context, "preset_aiden_mcu_cosmic", 1)
+                                    onImportPresetBot(presetMcuBook)
+                                    onOpenBot("preset_aiden_mcu_cosmic")
+                                } else { showChapterModal = true }
+                            }, contentAlignment = Alignment.Center) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.MenuBook, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                Text(if (isBookExisting) "📖 Devam Et" else "📖 Kitaba Başla",
+                                    color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                            }
+                        }
+                        if (isBookExisting) {
+                            val delBtnScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                            val delScope = rememberCoroutineScope()
+                            Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xFF1A0808))
+                                .border(1.dp, Color(0xFF7F1D1D).copy(0.8f), RoundedCornerShape(14.dp))
+                                .graphicsLayer { scaleX = delBtnScale.value; scaleY = delBtnScale.value }
+                                .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                                    delScope.launch { delBtnScale.animateTo(0.88f, tween(80)); delBtnScale.animateTo(1f, tween(120)) }
+                                    onDeleteBot("preset_aiden_mcu_cosmic")
+                                }, contentAlignment = Alignment.Center) {
+                                Icon(androidx.compose.material.icons.Icons.Default.Delete, null,
+                                    tint = Color(0xFFF87171), modifier = Modifier.size(20.dp))
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Section Title
-        item {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = if (isEnglish) "Upcoming Interactive Novels" else "Gelecek İnteraktif Romanlar & Kitaplar",
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
-            )
+        // ── KİŞİSEL KİTAPLAR ─────────────────────────────────────────
+        if (myBooks.isNotEmpty()) {
+            item {
+                Text(if (isEnglish) "📖 Your Active Stories" else "📖 Kütüphaneniz",
+                    color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+            items(myBooks, key = { it.id }) { bookBot ->
+                val itemScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                val itemScope = rememberCoroutineScope()
+                val hashColor = remember(bookBot.id) {
+                    val colors = listOf(Color(0xFF7C3AED), Color(0xFF3B82F6), Color(0xFF059669),
+                        Color(0xFFD97706), Color(0xFFDB2777))
+                    colors[Math.abs(bookBot.id.hashCode()) % colors.size]
+                }
+                Box(modifier = Modifier.fillMaxWidth()
+                    .graphicsLayer { scaleX = itemScale.value; scaleY = itemScale.value }
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFF0F0D1F), Color(0xFF17122E))))
+                    .border(1.dp, Brush.linearGradient(listOf(hashColor.copy(0.5f), Color(0xFF2D1F50))), RoundedCornerShape(16.dp))
+                    .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                        itemScope.launch { itemScale.animateTo(0.97f, tween(80)); itemScale.animateTo(1f, tween(120)) }
+                        onOpenBot(bookBot.id)
+                    }.padding(14.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Kitap sırt rengi
+                        Box(modifier = Modifier.width(4.dp).height(48.dp).clip(RoundedCornerShape(2.dp))
+                            .background(hashColor))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(10.dp))
+                            .background(Brush.radialGradient(listOf(hashColor.copy(0.4f), Color(0xFF0A0818)))),
+                            contentAlignment = Alignment.Center) { Text("📖", fontSize = 20.sp) }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(bookBot.aiName, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            Text(bookBot.universeName.ifBlank { "İnteraktif Roman" }, color = hashColor, fontSize = 11.5.sp)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                            .background(Brush.linearGradient(listOf(Color(0xFF4C1D95), Color(0xFF2D1F50))))
+                            .padding(horizontal = 12.dp, vertical = 7.dp)) {
+                            Text(if (isEnglish) "Devam" else "Devam Et", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        val delItemScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                        val delItemScope = rememberCoroutineScope()
+                        Box(modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF1A0808))
+                            .graphicsLayer { scaleX = delItemScale.value; scaleY = delItemScale.value }
+                            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                                delItemScope.launch { delItemScale.animateTo(0.85f, tween(80)); delItemScale.animateTo(1f, tween(120)) }
+                                onDeleteBot(bookBot.id)
+                            }, contentAlignment = Alignment.Center) {
+                            Icon(androidx.compose.material.icons.Icons.Default.Delete, null,
+                                tint = Color(0xFFF87171), modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            }
         }
 
-        // Upcoming Books
+        // ── YAKINDA GELECEK ───────────────────────────────────────────
+        item {
+            Text(if (isEnglish) "Coming Soon" else "Yakında Gelecek",
+                color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
+
         val upcomingBooks = listOf(
-            Triple("SDN Dispatch Evreni: Gölgelerin Savaşı", "Güçler, klonlar ve gölgelerin savaşı. Bölüm 2 yakında yayında.", "📖 Bölüm 2"),
-            Triple("Viren Şehri Restoranı & The Joker", "Çift kişilik, gizli travmalar ve karanlık şehir anlatısı.", "📖 Bölüm 3"),
-            Triple("NewYork-Presbyterian Hospital", "Mucize Doktor, Erasure sendromu ve tıbbi dahi hikayesi.", "📖 Bölüm 4"),
-            Triple("Tokyo & Zürih Obsidian Protokolü", "Aero-kinetik senestezi, kriptoloji ve gölge arşivler.", "📖 Bölüm 5")
+            Triple("SDN Dispatch Evreni: Gölgelerin Savaşı", "Güçler, klonlar ve gölgelerin savaşı.", "🔒"),
+            Triple("Viren Şehri Restoranı & The Joker", "Çift kişilik, gizli travmalar ve karanlık şehir.", "🔒"),
+            Triple("NewYork-Presbyterian Hospital", "Mucize Doktor, Erasure sendromu.", "🔒"),
+            Triple("Tokyo & Zürih Obsidian Protokolü", "Aero-kinetik senestezi, kriptoloji.", "🔒")
         )
 
-        items(upcomingBooks) { (title, desc, chBadge) ->
-            Card(
-                colors = CardDefaults.cardColors(containerColor = AppColors.Hex_131122),
-                shape = RoundedCornerShape(16.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x30A78BFA)),
-                modifier = Modifier.fillMaxWidth()
+        items(upcomingBooks) { (title, desc, _) ->
+            Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                .background(Brush.linearGradient(listOf(Color(0xFF0A0818), Color(0xFF0F0D1F))))
+                .border(1.dp, Color(0xFF1A1535), RoundedCornerShape(14.dp))
+                .padding(14.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(46.dp)
-                            .clip(CircleShape)
-                            .background(AppColors.Hex_221738),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MenuBook,
-                            contentDescription = null,
-                            tint = AppColors.PrimaryPurple,
-                            modifier = Modifier.size(22.dp)
-                        )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(42.dp).clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF110E24)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.MenuBook, null, tint = Color(0xFF3D2D60), modifier = Modifier.size(20.dp))
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = title,
-                                color = Color.White,
-                                fontSize = 14.5.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = desc,
-                            color = AppColors.TextMuted,
-                            fontSize = 12.sp
-                        )
+                        Text(title, color = Color(0xFF6B5E8A), fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        Text(desc, color = Color(0xFF3D3060), fontSize = 11.5.sp)
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(AppColors.Hex_1F1D36)
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "Yakında",
-                            color = AppColors.PrimaryPurple,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                    Box(modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF110E24))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)) {
+                        Text("Yakında", color = Color(0xFF4C3D7A), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -4012,201 +4476,164 @@ fun ChapterSelectionModal(
         )
     )
 
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        androidx.compose.material3.Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = Color.Transparent,
-            border = BorderStroke(1.5.dp, Brush.linearGradient(listOf(AppColors.PrimaryViolet, AppColors.Indigo))),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 12.dp)
-        ) {
-            Box {
-                AppBackground()
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp)
-                ) {
-                // Header with title and close button
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (isEnglish) "📖 Chapter Selection" else "📖 Bölüm Sayfası",
-                            color = Color.White,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = bookTitle,
-                            color = AppColors.PrimaryPurple,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
+    val modalInfinite = rememberInfiniteTransition(label = "chModal")
+    val modalGlow by modalInfinite.animateFloat(0.5f, 1f,
+        infiniteRepeatable(tween(1200), RepeatMode.Reverse), label = "mg")
 
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(AppColors.CardDeepIndigo)
-                            .border(1.dp, Color(0x60A78BFA), CircleShape)
-                    ) {
-                        Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Default.Close,
-                            contentDescription = "Kapat",
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Box(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFF0A0818), Color(0xFF120D24))))
+            .border(1.5.dp, Brush.linearGradient(listOf(
+                Color(0xFF7C3AED).copy(modalGlow), Color(0xFF4F46E5).copy(modalGlow * 0.7f),
+                Color(0xFF7C3AED).copy(modalGlow)
+            )), RoundedCornerShape(24.dp))
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+                // Header
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp))
+                            .background(Brush.radialGradient(listOf(Color(0xFF4C1D95), Color(0xFF1A0D3A)))),
+                            contentAlignment = Alignment.Center) { Text("📖", fontSize = 17.sp) }
+                        Column {
+                            Text(if (isEnglish) "Chapter Selection" else "Bölüm Seçimi",
+                                color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+                            Text(bookTitle, color = Color(0xFF9F7AEA), fontSize = 11.sp, maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        }
+                    }
+                    val closeBtnScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                    val closeScope = rememberCoroutineScope()
+                    Box(modifier = Modifier.size(34.dp).clip(CircleShape)
+                        .background(Color(0xFF1A1035))
+                        .border(1.dp, Color(0xFF2D1F50), CircleShape)
+                        .graphicsLayer { scaleX = closeBtnScale.value; scaleY = closeBtnScale.value }
+                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                            closeScope.launch { closeBtnScale.animateTo(0.85f, tween(80)); closeBtnScale.animateTo(1f, tween(120)) }
+                            onDismiss()
+                        }, contentAlignment = Alignment.Center) {
+                        Icon(androidx.compose.material.icons.Icons.Default.Close, null,
+                            tint = Color(0xFFCDA8FF), modifier = Modifier.size(16.dp))
                     }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Progress Banner
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(AppColors.Hex_1E153A)
-                        .border(1.dp, Color(0x40A78BFA), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 12.dp, vertical = 10.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("✨", fontSize = 15.sp)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (progress >= 3) "Mevcut İlerleme: Bölüm 3 Tamamlandı 🎉"
-                            else if (progress >= 2) "Mevcut İlerleme: Bölüm 2 Tamamlandı (Bölüm 3 Açık)"
-                            else if (progress >= 1) "Mevcut İlerleme: Bölüm 1 Tamamlandı (Bölüm 2 Açık)"
-                            else "Mevcut İlerleme: Henüz Başlanmadı (Bölüm 1 Açık)",
-                            color = AppColors.PurpleLight,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                // İlerleme banner
+                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF120D24))
+                    .border(1.dp, Color(0xFF2D1F50), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // Mini progress dots
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            repeat(3) { i ->
+                                Box(modifier = Modifier.size(if (i < progress) 8.dp else 6.dp).clip(CircleShape)
+                                    .background(if (i < progress) Color(0xFF34D399) else Color(0xFF2D1F50)))
+                            }
+                        }
+                        Text(when {
+                            progress >= 3 -> "Bölüm 3 Tamamlandı 🎉"
+                            progress >= 2 -> "Bölüm 2 Tamamlandı • Bölüm 3 Açık"
+                            progress >= 1 -> "Bölüm 1 Tamamlandı • Bölüm 2 Açık"
+                            else -> "Henüz Başlanmadı • Bölüm 1 Açık"
+                        }, color = Color(0xFFCDA8FF), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // List of Chapters
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
+                // Bölüm kartları
+                Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     chapters.forEach { item ->
                         val isUnlocked = item.index <= (progress + 1) && item.index <= 3
                         val isCompleted = item.index <= progress
                         val isCurrent = (progress + 1) == item.index || (progress >= 3 && item.index == 3)
+                        val isComingSoon = item.index == 4
 
-                        val displayTitle = if (isUnlocked) item.openTitle else "Bölüm ${item.index}: 🔒 Kilitli Bölüm"
-                        val displayDesc = if (isUnlocked) item.openDesc else "🔒 Bu bölümün adı ve detayları kilitlidir. Açmak için önceki bölümü tamamlayın."
+                        val itemScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                        val itemScope = rememberCoroutineScope()
 
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (isCurrent) AppColors.Hex_1F123C else if (isUnlocked) AppColors.Hex_150F2E else AppColors.Hex_0C091A
-                            ),
-                            shape = RoundedCornerShape(16.dp),
-                            border = BorderStroke(
-                                1.dp,
-                                if (isCurrent) AppColors.PrimaryViolet else if (isUnlocked) Color(0x60A78BFA) else Color(0x2064748B)
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    if (item.index == 4) {
-                                        android.widget.Toast.makeText(context, "🔒 Bölüm 4 yapım aşamasındadır. Çok yakında yayınlanacak!", android.widget.Toast.LENGTH_LONG).show()
-                                    } else if (isUnlocked) {
+                        Box(modifier = Modifier.fillMaxWidth()
+                            .graphicsLayer { scaleX = itemScale.value; scaleY = itemScale.value }
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(when {
+                                isComingSoon -> Color(0xFF080614)
+                                isCurrent -> Brush.linearGradient(listOf(Color(0xFF1A1040), Color(0xFF120D2A)))
+                                isCompleted -> Brush.linearGradient(listOf(Color(0xFF0A1A14), Color(0xFF080F10)))
+                                isUnlocked -> Brush.linearGradient(listOf(Color(0xFF120D24), Color(0xFF0A0818)))
+                                else -> Brush.linearGradient(listOf(Color(0xFF080612), Color(0xFF080612)))
+                            })
+                            .border(1.dp, when {
+                                isComingSoon -> Color(0xFF120D24)
+                                isCurrent -> Brush.linearGradient(listOf(Color(0xFF7C3AED), Color(0xFF4F46E5)))
+                                isCompleted -> Brush.linearGradient(listOf(Color(0xFF059669), Color(0xFF047857)))
+                                isUnlocked -> Brush.linearGradient(listOf(Color(0xFF3D2D60), Color(0xFF2D1F50)))
+                                else -> Brush.linearGradient(listOf(Color(0xFF1A1535), Color(0xFF1A1535)))
+                            }, RoundedCornerShape(14.dp))
+                            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                                when {
+                                    isComingSoon -> android.widget.Toast.makeText(context,
+                                        "Bölüm 4 yapım aşamasındadır, yakında yayınlanacak!", android.widget.Toast.LENGTH_SHORT).show()
+                                    isUnlocked -> {
+                                        itemScope.launch { itemScale.animateTo(0.96f, tween(80)); itemScale.animateTo(1f, tween(120)) }
                                         onSelectChapter(item.index, item.startMsg)
-                                    } else {
-                                        android.widget.Toast.makeText(context, "🔒 Bu bölüm kilitlidir. Açmak için lütfen önceki bölümü tamamlayın!", android.widget.Toast.LENGTH_SHORT).show()
                                     }
+                                    else -> android.widget.Toast.makeText(context,
+                                        "Önce önceki bölümü tamamla!", android.widget.Toast.LENGTH_SHORT).show()
                                 }
+                            }.padding(12.dp)
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // Badge
-                                Box(
-                                    modifier = Modifier
-                                        .size(38.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            if (isCompleted) AppColors.Emerald
-                                            else if (isUnlocked) AppColors.DeepPurple
-                                            else AppColors.DarkSlate
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (!isUnlocked) {
-                                        Icon(Icons.Default.Lock, contentDescription = "Kilitli", tint = AppColors.TextMuted, modifier = Modifier.size(18.dp))
-                                    } else if (isCompleted) {
-                                        Icon(Icons.Default.Star, contentDescription = "Tamamlandı", tint = Color.White, modifier = Modifier.size(20.dp))
-                                    } else {
-                                        Text(
-                                            text = "${item.index}",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Black,
-                                            fontSize = 15.sp
-                                        )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                // Sol ikon
+                                Box(modifier = Modifier.size(40.dp).clip(CircleShape)
+                                    .background(when {
+                                        isComingSoon -> Color(0xFF110E24)
+                                        isCompleted -> Brush.radialGradient(listOf(Color(0xFF059669), Color(0xFF047857)))
+                                        isCurrent -> Brush.radialGradient(listOf(Color(0xFF7C3AED), Color(0xFF4C1D95)))
+                                        isUnlocked -> Brush.radialGradient(listOf(Color(0xFF3730A3), Color(0xFF1E1B4B)))
+                                        else -> Brush.radialGradient(listOf(Color(0xFF1A1535), Color(0xFF110E24)))
+                                    }), contentAlignment = Alignment.Center) {
+                                    when {
+                                        isComingSoon -> Icon(Icons.Default.Lock, null, tint = Color(0xFF3D2D60), modifier = Modifier.size(18.dp))
+                                        !isUnlocked -> Icon(Icons.Default.Lock, null, tint = Color(0xFF3D2D60), modifier = Modifier.size(18.dp))
+                                        isCompleted -> Icon(Icons.Default.Star, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                        else -> Text("${item.index}", color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp)
                                     }
                                 }
-
-                                Spacer(modifier = Modifier.width(10.dp))
-
+                                Spacer(modifier = Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Text(
-                                            text = displayTitle,
-                                            color = if (isUnlocked) Color.White else AppColors.TextMuted,
-                                            fontSize = 13.5.sp,
-                                            fontWeight = FontWeight.Bold,
+                                            if (isUnlocked && !isComingSoon) item.openTitle else if (isComingSoon) "Bölüm 4: Yakında" else "Bölüm ${item.index}: 🔒 Kilitli",
+                                            color = if (isUnlocked && !isComingSoon) Color.White else Color(0xFF3D2D60),
+                                            fontSize = 13.sp, fontWeight = FontWeight.Bold,
                                             modifier = Modifier.weight(1f, fill = false)
                                         )
-
-                                        if (isCurrent && isUnlocked) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .padding(start = 6.dp)
-                                                    .clip(RoundedCornerShape(6.dp))
-                                                    .background(AppColors.DeepPurple)
-                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                                            ) {
-                                                Text("ŞU ANKİ", color = Color.White, fontSize = 8.5.sp, fontWeight = FontWeight.Black)
-                                            }
+                                        if (isCurrent) Box(modifier = Modifier.clip(RoundedCornerShape(5.dp))
+                                            .background(Color(0xFF4C1D95)).padding(horizontal = 5.dp, vertical = 2.dp)) {
+                                            Text("AKTİF", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Black, letterSpacing = 0.5.sp)
+                                        }
+                                        if (isCompleted) Box(modifier = Modifier.clip(RoundedCornerShape(5.dp))
+                                            .background(Color(0xFF047857)).padding(horizontal = 5.dp, vertical = 2.dp)) {
+                                            Text("✓ BİTİRİLDİ", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Black)
                                         }
                                     }
-
                                     Spacer(modifier = Modifier.height(3.dp))
-
                                     Text(
-                                        text = displayDesc,
-                                        color = if (isUnlocked) AppColors.TextSecondary else AppColors.TextSlate,
-                                        fontSize = 11.sp,
-                                        lineHeight = 14.5.sp
+                                        if (isUnlocked && !isComingSoon) item.openDesc else if (isComingSoon) "Yapım aşamasında, çok yakında..." else "Önceki bölümü tamamla.",
+                                        color = if (isUnlocked && !isComingSoon) Color(0xFF8B7CB0) else Color(0xFF2D2048),
+                                        fontSize = 11.sp, lineHeight = 15.sp
                                     )
                                 }
-
                                 Spacer(modifier = Modifier.width(6.dp))
-
                                 Icon(
-                                    imageVector = if (isUnlocked) Icons.Default.ChevronRight else Icons.Default.Lock,
-                                    contentDescription = null,
-                                    tint = if (isUnlocked) AppColors.PrimaryPurple else AppColors.Hex_475569,
+                                    if (isUnlocked && !isComingSoon) Icons.Default.ChevronRight else Icons.Default.Lock,
+                                    null,
+                                    tint = if (isUnlocked && !isComingSoon) Color(0xFF7C3AED) else Color(0xFF2D1F50),
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -4216,19 +4643,21 @@ fun ChapterSelectionModal(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                Button(
-                    onClick = onDismiss,
-                    colors = ButtonDefaults.buttonColors(containerColor = AppColors.CardDeepIndigo),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(44.dp)
-                ) {
-                    Text(if (isEnglish) "Close" else "Kapat", color = AppColors.PurpleLight, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+                // Kapat butonu
+                val closeBtnScale2 = remember { androidx.compose.animation.core.Animatable(1f) }
+                val closeScope2 = rememberCoroutineScope()
+                Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFF1A1035))
+                    .border(1.dp, Color(0xFF2D1F50), RoundedCornerShape(14.dp))
+                    .graphicsLayer { scaleX = closeBtnScale2.value; scaleY = closeBtnScale2.value }
+                    .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                        closeScope2.launch { closeBtnScale2.animateTo(0.95f, tween(80)); closeBtnScale2.animateTo(1f, tween(120)) }
+                        onDismiss()
+                    }, contentAlignment = Alignment.Center) {
+                    Text(if (isEnglish) "Close" else "Kapat", color = Color(0xFF9F7AEA), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
             }
         }
     }
-}
 }
 

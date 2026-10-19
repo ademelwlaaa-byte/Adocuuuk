@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 *)",
+      "Bash(echo \"EXIT: $?\")",
+      "Read(//tmp/**)",
+      "Bash(xargs -I{} sh -c 'echo \"$\\(wc -c < {}\\) {}\"')",
+      "Bash(grep -v \"\\\\.kt$\")",
+      "Bash(xargs '-I{}' python3 -c ' *)",
+      "Read(//data/data/com.termux/files/home/**)",
+      "Bash(awk -F: '$1 >= 347 && $1 <= 620')",
+      "Bash(grep *)",
+      "Read(//storage/emulated/0/**)",
+      "Read(//storage/emulated/0/Download/**)",
+      "Bash(find /data/data/com.termux/files/home/proje/Adocuuuk-main/app/src -name *.kt)",
+      "Bash(read f *)",
+      "Bash(./gradlew :app:compileDebugKotlin)",
+      "Bash(ANDROID_HOME=/dev/null ./gradlew :app:testDebugUnitTest --tests \"com.example.MemoryEmotionRegressionTest\")",
+      "Read(//data/data/com.termux/files/usr/share/**)",
+      "Read(//data/data/com.termux/files/**)"
+    ]
+  }
+}

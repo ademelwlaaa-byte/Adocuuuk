@@ -35,15 +35,21 @@ data class BotEntity(
     val worldAtmosphere: String = """{"mood":"sakin","intensity":5,"currentEvent":""}""",
     val baseAffectionDifficulty: Double = 1.0,
     val emotionalRegulationCapacity: Int = 50,
-    val storyCalendarDate: String = "2026-08-29",
+    val storyCalendarDate: String = "",
     val storyDayCounter: Long = 1L,
     val birthDate: String = "",
     val currentAge: Int = 20,
     val initialAge: Int = 20,
     val lastMessageTimestamp: Long = 0L,
     val baselineEmotionAnalysisJson: String = "",
+    val baselineAnalysisSource: String = "",      // "llm" | "keyword" | "user_edited" | ""
+    val baselineInputHash: String = "",           // SHA-256 of input fields to skip redundant re-analysis
+    val baselineUserEditedFields: String = "",    // comma-separated field names the user manually edited
     val lastTimeMismatchCorrectionNote: String = "",
-    val updatedAt: Long = System.currentTimeMillis()
+    val sceneTime: String = "",
+    val hasExplicitStoryDate: Boolean = false,
+    val updatedAt: Long = System.currentTimeMillis(),
+    val proactiveEnabled: Boolean = false
 )
 
 

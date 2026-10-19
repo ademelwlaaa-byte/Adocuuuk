@@ -16,7 +16,8 @@ data class MemoryCheckpointEntity(
     val messageRangeEnd: Int,
     val summaryText: String,
     val embedding: String = "",
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val isTemporary: Boolean = false   // true = kesit yedek, özet gelince yerinde güncellenir
 )
 
 @Dao
@@ -38,4 +39,10 @@ interface MemoryCheckpointDao {
 
     @Query("DELETE FROM memory_checkpoints WHERE botId = :botId")
     suspend fun deleteCheckpointsForBot(botId: String)
+
+    @Query("SELECT * FROM memory_checkpoints WHERE botId = :botId AND isTemporary = 1 ORDER BY checkpointNumber DESC LIMIT 1")
+    suspend fun getLatestTemporaryCheckpoint(botId: String): MemoryCheckpointEntity?
+
+    @Query("UPDATE memory_checkpoints SET summaryText = :summaryText, embedding = :embedding, isTemporary = 0 WHERE id = :id")
+    suspend fun upgradeTemporaryCheckpoint(id: Long, summaryText: String, embedding: String)
 }

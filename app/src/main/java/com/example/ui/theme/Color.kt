@@ -31,16 +31,42 @@ val EmochiErrorContainer = Color(0xFF3D1A1A)
 
 object EmochiGradients {
     val primaryButton = Brush.horizontalGradient(
-        colors = listOf(Color(0xFF7C3AED), Color(0xFFC084FC))
+        colors = listOf(Color(0xFF7C3AED), Color(0xFFA855F7), Color(0xFFC084FC))
     )
-    val userBubble = Brush.horizontalGradient(
-        colors = listOf(Color(0xFFFFC0B2), Color(0xFFF7967E))
+    val primaryButtonVertical = Brush.verticalGradient(
+        colors = listOf(Color(0xFF9333EA), Color(0xFF6D28D9))
     )
-    val botBubble = Brush.verticalGradient(
-        colors = listOf(Color(0xFF191333), Color(0xFF100B24))
+    // User mesaj balonu — sıcak derin mor
+    val chatBubbleUser = Brush.linearGradient(
+        colors = listOf(Color(0xFF3B1070), Color(0xFF1E0850))
     )
+    val chatBubbleUserBorder = Brush.linearGradient(
+        colors = listOf(Color(0xFFC084FC), Color(0xFF7C3AED), Color(0xFF4C1D95))
+    )
+    // AI mesaj balonu — soğuk koyu gece
+    val chatBubbleAi = Brush.verticalGradient(
+        colors = listOf(Color(0xFF140D2E), Color(0xFF0C0820))
+    )
+    val chatBubbleAiBorder = Brush.linearGradient(
+        colors = listOf(Color(0xFF6D28D9), Color(0xFF3B0764), Color(0xFF1E1040))
+    )
+    // Input bar
+    val inputBarBg = Brush.verticalGradient(
+        colors = listOf(Color(0xFF120A28), Color(0xFF0C0820))
+    )
+    val inputBarBorder = Brush.linearGradient(
+        colors = listOf(Color(0xFFA855F7), Color(0xFF4C1D95), Color(0xFF7C3AED))
+    )
+    // Stats bar (affection/trust/tension)
+    val statsBar = Brush.horizontalGradient(
+        colors = listOf(Color(0xFF1A0A30), Color(0xFF120826))
+    )
+    // Kart arka plan
     val cardBackground = Brush.verticalGradient(
-        colors = listOf(Color(0xFF140F30), Color(0xFF0F0A24))
+        colors = listOf(Color(0xFF1A1040), Color(0xFF0F0A24))
+    )
+    val cardBorder = Brush.linearGradient(
+        colors = listOf(Color(0xFFD8B4FE), Color(0xFFA855F7), Color(0xFF7C3AED), Color(0xFF4C1D95))
     )
     val heroHeader = Brush.linearGradient(
         colors = listOf(Color(0xFF1E1145), Color(0xFF0C091A), Color(0xFF070510))
@@ -53,6 +79,22 @@ object EmochiGradients {
     )
     val goldBadge = Brush.horizontalGradient(
         colors = listOf(Color(0xFFFBBF24), Color(0xFFF59E0B))
+    )
+    // Quick prompt chips
+    val chipBorder = Brush.linearGradient(
+        colors = listOf(Color(0xFFA855F7), Color(0xFF4C1D95))
+    )
+    // Pill actions
+    val pillBorder = Brush.linearGradient(
+        colors = listOf(Color(0xFFC084FC), Color(0xFF4C1D95))
+    )
+    // Bottom nav indicator
+    val navIndicator = Brush.verticalGradient(
+        colors = listOf(Color(0x2AA855F7), Color(0x10A855F7))
+    )
+    // Avatar border sweep
+    val avatarBorderSweep: List<Color> = listOf(
+        Color(0xFFE9D5FF), Color(0xFFC084FC), Color(0xFF7C3AED), Color(0xFFE9D5FF)
     )
 }
 

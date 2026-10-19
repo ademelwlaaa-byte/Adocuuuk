@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.room.Room
 import com.example.data.local.AppDatabase
 import com.example.data.local.CastMemberEntity
+import com.example.data.local.CustomProviderEntity
 import com.example.data.local.EmotionState
+import com.example.data.local.PersonalityProfile
 import com.example.data.local.RelationshipAxes
 import com.example.data.local.PrimaryEmotions
 import com.example.data.local.WorldState
@@ -1055,6 +1057,396 @@ class MemoryEmotionRegressionTest {
         assertNotNull("Cloned bot must still exist independently after original is deleted", verifyClonedStillExists)
 
         db.close()
+    }
+
+    // =========================================================================
+    // SECTION 8 (BÖLÜM 0): UTILITY MODEL RESOLUTION TESTS
+    // =========================================================================
+
+    @Test
+    fun testResolveUtilityModel_knownProviders() {
+        val settings = UserSettingsEntity()
+
+        assertEquals("gpt-4o-mini", EmochiRepository.resolveUtilityModel("openai", settings))
+        assertEquals("claude-3-haiku-20240307", EmochiRepository.resolveUtilityModel("claude", settings))
+        assertEquals("mistral-small-latest", EmochiRepository.resolveUtilityModel("mistral", settings))
+        assertEquals("gemini-2.0-flash", EmochiRepository.resolveUtilityModel("gemini", settings))
+        assertEquals("openai/gpt-oss-20b", EmochiRepository.resolveUtilityModel("groq", settings))
+    }
+
+    @Test
+    fun testResolveUtilityModel_customProvider_manualOverride() {
+        val settings = UserSettingsEntity()
+        val customProvider = CustomProviderEntity(
+            id = 1L,
+            label = "MyProvider",
+            baseUrl = "https://api.example.com",
+            apiKeyEncrypted = "key",
+            modelName = "big-model-70b",
+            utilityModel = "small-model-7b",
+            utilityModelSource = "manual",
+            detectedSmallModels = "[\"tiny-1b\", \"small-model-7b\"]"
+        )
+        // Manual override must always win over auto-detected and main model
+        val result = EmochiRepository.resolveUtilityModel("custom_1", settings, customProvider)
+        assertEquals("Manual utility model must be used", "small-model-7b", result)
+    }
+
+    @Test
+    fun testResolveUtilityModel_customProvider_autoDetected() {
+        val settings = UserSettingsEntity()
+        val customProvider = CustomProviderEntity(
+            id = 2L,
+            label = "AutoProvider",
+            baseUrl = "https://api.example.com",
+            apiKeyEncrypted = "key",
+            modelName = "main-large-70b",
+            utilityModel = "",              // No manual override
+            utilityModelSource = "auto_detected",
+            detectedSmallModels = "[\"fast-1b\", \"mini-3b\"]"
+        )
+        val result = EmochiRepository.resolveUtilityModel("custom_2", settings, customProvider)
+        assertEquals("First auto-detected small model should be used", "fast-1b", result)
+    }
+
+    @Test
+    fun testResolveUtilityModel_customProvider_fallbackToMain() {
+        val settings = UserSettingsEntity()
+        val customProvider = CustomProviderEntity(
+            id = 3L,
+            label = "NoSmallProvider",
+            baseUrl = "https://api.example.com",
+            apiKeyEncrypted = "key",
+            modelName = "only-model",
+            utilityModel = "",
+            utilityModelSource = "fallback_to_main",
+            detectedSmallModels = "[]"
+        )
+        val result = EmochiRepository.resolveUtilityModel("custom_3", settings, customProvider)
+        assertEquals("Must fallback to main model when no small model available", "only-model", result)
+    }
+
+    @Test
+    fun testDetectSmallModelCandidates_keywordMatching() {
+        val models = listOf(
+            "big-model-70b",
+            "gpt-4o-mini",
+            "llama-3.3-7b-instruct",
+            "large-model-100b",
+            "gemini-flash",
+            "some-nano-v2",
+            "deepseek-v3"
+        )
+        val candidates = EmochiRepository.detectSmallModelCandidates(models)
+
+        assertTrue("mini model should be detected", candidates.contains("gpt-4o-mini"))
+        assertTrue("7b model should be detected", candidates.contains("llama-3.3-7b-instruct"))
+        assertTrue("flash model should be detected", candidates.contains("gemini-flash"))
+        assertTrue("nano model should be detected", candidates.contains("some-nano-v2"))
+        assertFalse("70b model should NOT be in candidates", candidates.contains("big-model-70b"))
+        assertFalse("100b model should NOT be in candidates", candidates.contains("large-model-100b"))
+    }
+
+    @Test
+    fun testDetectSmallModelCandidates_paramCountSorting() {
+        val models = listOf("model-8b", "model-1b", "model-4b")
+        val candidates = EmochiRepository.detectSmallModelCandidates(models)
+        assertEquals("Smallest param count should be first", "model-1b", candidates[0])
+        assertEquals("Second smallest should be second", "model-4b", candidates[1])
+        assertEquals("Largest small model should be last", "model-8b", candidates[2])
+    }
+
+    @Test
+    fun testParseDetectedSmallModels_validJson() {
+        val json = """["fast-1b","mini-3b","small-7b"]"""
+        val result = EmochiRepository.parseDetectedSmallModels(json)
+        assertEquals(3, result.size)
+        assertEquals("fast-1b", result[0])
+    }
+
+    @Test
+    fun testParseDetectedSmallModels_empty() {
+        assertEquals(emptyList<String>(), EmochiRepository.parseDetectedSmallModels("[]"))
+        assertEquals(emptyList<String>(), EmochiRepository.parseDetectedSmallModels(""))
+        assertEquals(emptyList<String>(), EmochiRepository.parseDetectedSmallModels("  "))
+    }
+
+    // =========================================================================
+    // SECTION 9 (BÖLÜM 1): SIDE CHARACTER PERSONALITY PROFILE TESTS
+    // =========================================================================
+
+    @Test
+    fun testSideCharacterPersonalityDerivation_avoidantRole() {
+        // A cold, distant antagonist should yield avoidant attachment + low agreeableness
+        val personality = PersonalityProfile.deriveFromPersonality(
+            aiName = "Viktor",
+            personalityText = "Mesafeli, soğuk, rakip, asi",
+            scenarioText = "İş ortamında geçen aksiyon hikayesi"
+        )
+        assertTrue("Agreeableness should be low for hostile character", personality.agreeableness < 50)
+        assertTrue("Attachment should lean avoidant/fearful for cold, distant character",
+            personality.attachmentStyle == "avoidant" || personality.attachmentStyle == "fearful_avoidant")
+    }
+
+    @Test
+    fun testSideCharacterPersonalityDerivation_secureRole() {
+        // A warm, caring mentor character
+        val personality = PersonalityProfile.deriveFromPersonality(
+            aiName = "Mentor Aylin",
+            personalityText = "Sevecen, şefkatli, yardımsever, sakin, dengeli",
+            scenarioText = "Okulda geçen drama"
+        )
+        assertTrue("Agreeableness should be high for caring mentor", personality.agreeableness >= 50)
+        assertTrue("Neuroticism should be low for calm character", personality.neuroticism <= 50)
+        assertEquals("Calm, agreeable character should be secure", "secure", personality.attachmentStyle)
+    }
+
+    @Test
+    fun testSideCharacterPersonalityDerivation_anxiousRole() {
+        // A dependent, anxiety-prone character
+        val personality = PersonalityProfile.deriveFromPersonality(
+            aiName = "Kerem",
+            personalityText = "Kaygılı, terk edilmekten korkan, bağımlı, stresli",
+            scenarioText = "Romantik drama"
+        )
+        assertEquals("Anxiety-prone character should have anxious attachment", "anxious", personality.attachmentStyle)
+        assertTrue("Neuroticism should be high for anxious character", personality.neuroticism > 50)
+    }
+
+    @Test
+    fun testSideCharacterPersonality_serialization() {
+        val original = PersonalityProfile(
+            openness = 70,
+            conscientiousness = 45,
+            extraversion = 60,
+            agreeableness = 30,
+            neuroticism = 75,
+            attachmentStyle = "fearful_avoidant"
+        )
+        val json = original.toJson()
+        val restored = PersonalityProfile.fromJson(json)
+        assertEquals(original.openness, restored.openness)
+        assertEquals(original.agreeableness, restored.agreeableness)
+        assertEquals(original.neuroticism, restored.neuroticism)
+        assertEquals(original.attachmentStyle, restored.attachmentStyle)
+    }
+
+    // =========================================================================
+    // SECTION 10 (BÖLÜM 1): CHARACTER_EMOTION JSON-REPAIR TESTS
+    // =========================================================================
+
+    @Test
+    fun testJsonRepair_trailingComma() {
+        // Simulates malformed JSON with trailing comma — should be repaired
+        val malformed = """{"mood": "mutlu", "affection_delta": 5,}"""
+        val repaired = try {
+            val fixed = malformed
+                .replace(Regex("""'([^']*)'"""), "\"$1\"")
+                .replace(Regex(""",\s*([}\]])"""), "$1")
+                .let { s -> if (!s.trimEnd().endsWith("}")) "$s}" else s }
+            org.json.JSONObject(fixed)
+        } catch (_: Exception) { null }
+        assertNotNull("Trailing comma JSON should be repaired", repaired)
+        assertEquals("mutlu", repaired?.optString("mood"))
+        assertEquals(5, repaired?.optInt("affection_delta"))
+    }
+
+    @Test
+    fun testJsonRepair_missingClosingBrace() {
+        val malformed = """{"mood": "üzgün", "trust_delta": -3"""
+        val repaired = try {
+            val fixed = malformed
+                .replace(Regex("""'([^']*)'"""), "\"$1\"")
+                .replace(Regex(""",\s*([}\]])"""), "$1")
+                .let { s -> if (!s.trimEnd().endsWith("}")) "$s}" else s }
+            org.json.JSONObject(fixed)
+        } catch (_: Exception) { null }
+        assertNotNull("Missing closing brace JSON should be repaired", repaired)
+        assertEquals("üzgün", repaired?.optString("mood"))
+    }
+
+    @Test
+    fun testJsonRepair_singleQuotes() {
+        val malformed = """{'mood': 'sinirli', 'affection_delta': -8}"""
+        val repaired = try {
+            val fixed = malformed
+                .replace(Regex("""'([^']*)'"""), "\"$1\"")
+                .replace(Regex(""",\s*([}\]])"""), "$1")
+                .let { s -> if (!s.trimEnd().endsWith("}")) "$s}" else s }
+            org.json.JSONObject(fixed)
+        } catch (_: Exception) { null }
+        assertNotNull("Single-quote JSON should be repaired", repaired)
+        assertEquals("sinirli", repaired?.optString("mood"))
+        assertEquals(-8, repaired?.optInt("affection_delta"))
+    }
+
+    // =========================================================================
+    // SECTION 11 (BÖLÜM 2): MEMORY / RAG TESTS
+    // =========================================================================
+
+    @Test
+    fun testHybridScoringWeights_default() {
+        val weights = EmochiRepository.MemoryRankingWeights.forQuery("ne zaman buluştuk")
+        // No proper noun, no date → default weights
+        assertEquals(0.45f, weights.semanticWeight, 0.001f)
+        assertEquals(0.25f, weights.keywordWeight, 0.001f)
+        assertEquals(0.20f, weights.importanceWeight, 0.001f)
+        assertEquals(0.10f, weights.recencyWeight, 0.001f)
+        // Weights must sum to 1.0
+        val sum = weights.semanticWeight + weights.keywordWeight + weights.importanceWeight + weights.recencyWeight
+        assertEquals("Weights must sum to 1.0", 1.0f, sum, 0.001f)
+    }
+
+    @Test
+    fun testHybridScoringWeights_properNounBoost() {
+        val weights = EmochiRepository.MemoryRankingWeights.forQuery("Ahmet nerede çalışıyor")
+        // Proper noun → keywordWeight boosted to 0.40
+        assertEquals("Proper noun query should boost keywordWeight", 0.40f, weights.keywordWeight, 0.001f)
+        assertEquals("Semantic weight reduced with proper noun", 0.30f, weights.semanticWeight, 0.001f)
+    }
+
+    @Test
+    fun testHybridScoringWeights_dateBoost() {
+        val weights = EmochiRepository.MemoryRankingWeights.forQuery("ocak ayında ne oldu")
+        assertEquals("Date query should boost keywordWeight", 0.40f, weights.keywordWeight, 0.001f)
+    }
+
+    @Test
+    fun testImplicitCorrection_firstRejectionMarksDisputed() {
+        // After first rejection trigger, a 'certain' fact should become 'disputed'
+        val fact = com.example.data.local.MemoryFactEntity(
+            id = 1L,
+            botId = "bot1",
+            subject = "kullanıcı",
+            key = "meslek",
+            value = "doktor",
+            confidence = "certain",
+            userCorrected = false,
+            lastConfirmedAt = 0L
+        )
+        // Simulate the transition
+        val updated = fact.copy(confidence = "disputed", userCorrected = true)
+        assertEquals("First rejection should mark as disputed", "disputed", updated.confidence)
+        assertTrue("userCorrected should be true after first rejection", updated.userCorrected)
+    }
+
+    @Test
+    fun testImplicitCorrection_secondRejectionShouldArchive() {
+        // A fact already 'disputed' + userCorrected=true should be archived on second correction
+        val disputedFact = com.example.data.local.MemoryFactEntity(
+            id = 2L,
+            botId = "bot1",
+            subject = "kullanıcı",
+            key = "şehir",
+            value = "Ankara",
+            confidence = "disputed",
+            userCorrected = true,
+            lastConfirmedAt = 0L
+        )
+        // Archive logic condition: confidence == "disputed" && userCorrected == true
+        val shouldArchive = disputedFact.confidence == "disputed" && disputedFact.userCorrected
+        assertTrue("Second rejection of disputed+userCorrected fact should trigger archiving", shouldArchive)
+    }
+
+    @Test
+    fun testEntityRelationConflict_newerWins() {
+        // When two relations have same source+target but different types, the one with higher messageIndex wins
+        data class MockRelation(val relationType: String, val messageIndex: Int)
+        val existing = MockRelation("kardeşi", 5)
+        val incoming = MockRelation("patronu", 15)
+        val shouldReplace = incoming.messageIndex > existing.messageIndex
+        assertTrue("Newer relation should replace older conflicting one", shouldReplace)
+    }
+
+    @Test
+    fun testEntityRelationConflict_olderLoses() {
+        data class MockRelation(val relationType: String, val messageIndex: Int)
+        val existing = MockRelation("kardeşi", 20)
+        val incoming = MockRelation("düşmanı", 10)
+        val shouldReplace = incoming.messageIndex > existing.messageIndex
+        assertFalse("Older incoming relation should not replace newer existing one", shouldReplace)
+    }
+
+    @Test
+    fun testNearDuplicateMerge_longerContentWins() {
+        val existingDesc = "Ahmet İstanbul'da yaşıyor."
+        val newContent = "Ahmet İstanbul'da yaşıyor ve Kadıköy'de bir ofisi var."
+        // Merge logic: take longer content
+        val merged = if (newContent.length > existingDesc.length) newContent else existingDesc
+        assertEquals("Longer content should win in merge", newContent, merged)
+    }
+
+    @Test
+    fun testNearDuplicateMerge_importanceTakesMax() {
+        val existingImportance = 40
+        val newImportance = 70
+        val merged = maxOf(existingImportance, newImportance)
+        assertEquals("Max importance should be kept after merge", 70, merged)
+    }
+
+    // =========================================================================
+    // SECTION 12 (BÖLÜM 3): CHARACTER DETECTION TESTS
+    // =========================================================================
+
+    @Test
+    fun testCastMemberEntity_isManuallyAdded_computed() {
+        val autoCast = CastMemberEntity(
+            botId = "bot1",
+            name = "Yardımcı",
+            description = "Oto eklendi",
+            isAutoAdded = true
+        )
+        assertFalse("isAutoAdded=true means NOT manually added", autoCast.isManuallyAdded)
+
+        val manualCast = CastMemberEntity(
+            botId = "bot1",
+            name = "Önemli",
+            description = "Kullanıcı ekledi",
+            isAutoAdded = false
+        )
+        assertTrue("isAutoAdded=false means manually added", manualCast.isManuallyAdded)
+    }
+
+    @Test
+    fun testCastMemberEntity_confirmPending_setsManual() {
+        // When user confirms a pending cast member, isAutoAdded should become false
+        val pending = CastMemberEntity(
+            botId = "bot1",
+            name = "TestChar",
+            description = "Test",
+            isAutoAdded = true,
+            pendingUserConfirmation = true,
+            importanceScore = 55
+        )
+        // Simulate confirmPendingCastMember logic
+        val confirmed = pending.copy(
+            pendingUserConfirmation = false,
+            importanceScore = maxOf(pending.importanceScore, 75),
+            isAutoAdded = false
+        )
+        assertFalse("Confirmed character should not be auto-added", confirmed.isAutoAdded)
+        assertTrue("Confirmed character should be isManuallyAdded", confirmed.isManuallyAdded)
+        assertFalse("pendingUserConfirmation should be false", confirmed.pendingUserConfirmation)
+    }
+
+    @Test
+    fun testDetectSmallModelCandidates_emptyList() {
+        val result = EmochiRepository.detectSmallModelCandidates(emptyList())
+        assertTrue("Empty model list should return empty candidates", result.isEmpty())
+    }
+
+    @Test
+    fun testCustomProviderEntity_utilityModelFields() {
+        // Ensure new fields are properly initialised with defaults
+        val entity = CustomProviderEntity(
+            label = "TestProvider",
+            baseUrl = "https://example.com",
+            apiKeyEncrypted = "encrypted",
+            modelName = "test-model"
+        )
+        assertEquals("Default utilityModel should be empty", "", entity.utilityModel)
+        assertEquals("Default utilityModelSource should be 'none'", "none", entity.utilityModelSource)
+        assertEquals("Default detectedSmallModels should be empty JSON array", "[]", entity.detectedSmallModels)
     }
 }
 

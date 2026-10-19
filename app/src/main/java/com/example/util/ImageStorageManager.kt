@@ -4,9 +4,11 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -100,6 +102,65 @@ object ImageStorageManager {
             inputUri.toString()
         }
     }
+
+    /**
+     * Converts a local file path / URI string to a Base64-encoded data URI.
+     * Format: "data:image/jpeg;base64,<base64data>"
+     * Returns null if conversion fails.
+     */
+    suspend fun toBase64DataUri(context: Context, uriOrPath: String): String? = withContext(Dispatchers.IO) {
+        try {
+            // Already a data URI — return as-is
+            if (uriOrPath.startsWith("data:image/")) return@withContext uriOrPath
+
+            val bitmap: Bitmap? = when {
+                uriOrPath.startsWith("content://") || uriOrPath.startsWith("file://") -> {
+                    val uri = Uri.parse(uriOrPath)
+                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+                }
+                else -> {
+                    val file = File(uriOrPath)
+                    if (file.exists()) BitmapFactory.decodeFile(file.absolutePath) else null
+                }
+            } ?: return@withContext null
+
+            // Resize to max 512px for avatar storage (smaller than compressAndSave's 1024)
+            val maxDim = 512
+            val scaled = if (bitmap.width > maxDim || bitmap.height > maxDim) {
+                val ratio = minOf(maxDim.toFloat() / bitmap.width, maxDim.toFloat() / bitmap.height)
+                Bitmap.createScaledBitmap(bitmap, (bitmap.width * ratio).toInt(), (bitmap.height * ratio).toInt(), true)
+                    .also { if (it != bitmap) bitmap.recycle() }
+            } else bitmap
+
+            val out = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, 75, out)
+            if (scaled != bitmap) scaled.recycle()
+
+            val base64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+            "data:image/jpeg;base64,$base64"
+        } catch (e: Exception) {
+            Log.e(TAG, "toBase64DataUri failed", e)
+            null
+        }
+    }
+
+    /**
+     * Decodes a Base64 data URI back to a Bitmap.
+     */
+    fun base64DataUriToBitmap(dataUri: String): Bitmap? = try {
+        if (!dataUri.startsWith("data:image/")) return null
+        val base64Part = dataUri.substringAfter(",")
+        val bytes = Base64.decode(base64Part, Base64.NO_WRAP)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    } catch (e: Exception) {
+        Log.e(TAG, "base64DataUriToBitmap failed", e)
+        null
+    }
+
+    /**
+     * Returns true if the given string is a Base64 data URI.
+     */
+    fun isBase64DataUri(value: String): Boolean = value.startsWith("data:image/")
 
     /**
      * Infrastructure Helper: Prepares image for remote Cloud Storage (Firebase Storage / Cloudflare R2 / S3 REST API).
