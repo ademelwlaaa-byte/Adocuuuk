@@ -256,12 +256,14 @@ object MemoryToolRegistry {
         val toolCalls = mutableListOf<ParsedMemoryToolCall>()
 
         for (p in parts) {
-            if (!p.text.isNullOrBlank()) {
-                textParts.add(p.text)
+            val pText = p.text
+            if (!pText.isNullOrBlank()) {
+                textParts.add(pText)
             }
-            if (p.functionCall != null) {
-                val argsMap = p.functionCall.args?.mapValues { it.value as Any } ?: emptyMap()
-                toolCalls.add(ParsedMemoryToolCall(name = p.functionCall.name, arguments = argsMap))
+            val fc = p.functionCall
+            if (fc != null) {
+                val argsMap = fc.args?.mapValues { it.value as Any } ?: emptyMap()
+                toolCalls.add(ParsedMemoryToolCall(name = fc.name, arguments = argsMap))
             }
         }
         return Pair(textParts.joinToString("\n").trim(), toolCalls)

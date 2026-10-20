@@ -163,6 +163,9 @@ class EmochiRepository(
 
         const val THRESHOLD_VECTOR_ONLY = 0.75f
         const val THRESHOLD_QUERY_REWRITE = 0.50f
+        const val MAX_USER_INPUT_CHARS = 4000
+        private const val BUFFER_MAX_SIZE = 30
+        private const val BUFFER_EXPIRY_TURNS = 40
 
         @JvmStatic
         fun cleanEmotionTags(rawText: String): String {
@@ -317,8 +320,10 @@ class EmochiRepository(
         }
 
         fun calculateCastMemberDifficultyMultiplier(role: String, characterName: String, cueSentence: String = ""): Double {
-            val combined = "$role $characterName $cueSentence".lowercase()
+            val combined = "$role $characterName $cueSentence".lowercase(java.util.Locale("tr", "TR"))
             return when {
+                combined.contains("düşman") || combined.contains("rakip") || combined.contains("hain") || combined.contains("hasım") -> 0.50
+
                 combined.contains("patron") || combined.contains("boss") || combined.contains("yönetici") ||
                 combined.contains("müdür") || combined.contains("ceo") || combined.contains("öğretmen") ||
                 combined.contains("hoca") || combined.contains("profesör") || combined.contains("doktor") ||
@@ -330,26 +335,59 @@ class EmochiRepository(
                 combined.contains("yabancı") || combined.contains("tanıdık") || combined.contains("müşteri") ||
                 combined.contains("barista") || combined.contains("garson") || combined.contains("sürücü") -> 0.85
 
-                combined.contains("sevgili") || combined.contains("eş") || combined.contains("dost") ||
-                combined.contains("arkadaşım") || combined.contains("kardeş") -> 1.40
+                combined.contains("sevgili") || combined.contains("eş") || combined.contains("yakın dost") ||
+                combined.contains("dost") || combined.contains("arkadaşım") || combined.contains("kardeş") -> 1.40
+
+                combined.contains("güvenilir arkadaş") || combined.contains("sırdaş") -> 1.20
 
                 else -> 1.05
             }
         }
 
         fun determineEffectiveRoleMultiplier(member: CastMemberEntity, sceneContext: String): Double {
-            val lowerContext = sceneContext.lowercase()
-            val isWorkContext = listOf("iş", "ofis", "rapor", "toplantı", "görev", "şirket", "proje", "patron", "çalış").any { lowerContext.contains(it) }
-            val isPersonalContext = listOf("özel", "anı", "eski", "akşam", "sevgili", "aşk", "ev", "kahve", "sohbet", "yemek", "kalp").any { lowerContext.contains(it) }
+            val lowerContext = sceneContext.lowercase(java.util.Locale("tr", "TR"))
+            val isWorkContext = listOf("iş", "ofis", "rapor", "toplantı", "görev", "şirket", "proje", "patron", "çalış", "mesai", "bütçe", "sunum").any { lowerContext.contains(it) }
+            val isPersonalContext = listOf("özel", "anı", "eski", "akşam", "sevgili", "aşk", "ev", "kahve", "sohbet", "yemek", "kalp", "romantik", "baş başa", "gece").any { lowerContext.contains(it) }
 
-            val baseMult = if (member.baseAffectionDifficultyMultiplier > 0.0) member.baseAffectionDifficultyMultiplier else calculateCastMemberDifficultyMultiplier(member.role, member.name, sceneContext)
-            val secRole = member.secondaryRole.lowercase()
-            if (secRole.isNotBlank()) {
-                val secMult = calculateCastMemberDifficultyMultiplier(member.secondaryRole, member.name, sceneContext)
+            val candidateRoles = mutableListOf<String>()
+            if (member.role.isNotBlank()) {
+                member.role.split("/", ",").map { it.trim() }.filter { it.isNotBlank() }.forEach { candidateRoles.add(it) }
+            }
+            if (member.secondaryRole.isNotBlank()) {
+                member.secondaryRole.split("/", ",").map { it.trim() }.filter { it.isNotBlank() }.forEach { candidateRoles.add(it) }
+            }
+            if (member.multiRoleJson.isNotBlank() && member.multiRoleJson != "[]") {
+                try {
+                    val arr = org.json.JSONArray(member.multiRoleJson)
+                    for (i in 0 until arr.length()) {
+                        val r = arr.optString(i).trim()
+                        if (r.isNotBlank()) candidateRoles.add(r)
+                    }
+                } catch (_: Exception) {}
+            }
+
+            val baseMult = if (member.baseAffectionDifficultyMultiplier > 0.0) {
+                member.baseAffectionDifficultyMultiplier
+            } else {
+                calculateCastMemberDifficultyMultiplier(member.role, member.name, "")
+            }
+
+            val roleMultipliers = candidateRoles.distinct().map { roleItem ->
+                calculateCastMemberDifficultyMultiplier(roleItem, member.name, "")
+            }.toMutableList()
+            if (member.baseAffectionDifficultyMultiplier > 0.0) {
+                roleMultipliers.add(member.baseAffectionDifficultyMultiplier)
+            }
+
+            if (roleMultipliers.size > 1) {
                 return when {
-                    isWorkContext -> minOf(baseMult, secMult)
-                    isPersonalContext -> maxOf(baseMult, secMult)
-                    else -> minOf(baseMult, secMult)
+                    isWorkContext && !isPersonalContext -> roleMultipliers.minOrNull() ?: baseMult
+                    isPersonalContext && !isWorkContext -> roleMultipliers.maxOrNull() ?: baseMult
+                    isWorkContext && isPersonalContext -> {
+                        // Mixed context: if work keywords dominate or equal, stay conservative
+                        roleMultipliers.minOrNull() ?: baseMult
+                    }
+                    else -> roleMultipliers.minOrNull() ?: baseMult
                 }
             }
             return baseMult
@@ -616,8 +654,6 @@ class EmochiRepository(
     )
     private val candidateBuffer = java.util.concurrent.ConcurrentHashMap<String, MutableMap<String, CandidateBufferEntry>>()
     private val globalTurnCounter = java.util.concurrent.atomic.AtomicInteger(0)
-    private const val BUFFER_MAX_SIZE = 30
-    private const val BUFFER_EXPIRY_TURNS = 40
 
     fun getRegenerateCount(botId: String): Int = regenerateCountMap[botId] ?: 0
 
@@ -746,7 +782,28 @@ class EmochiRepository(
         try {
             extractAndSaveRoutinesFromBotPersonality(bot.id, bot.aiPersonality, bot.scenario)
         } catch (_: Exception) {}
+        try {
+            val keyChars = parseKeyCharacters(bot.keyCharactersJson)
+            for (kc in keyChars) {
+                if (!kc.id.startsWith("auto_")) {
+                    ensureKeyCharacterMirroredAsCastMember(bot.id, kc)
+                }
+            }
+        } catch (_: Exception) {}
         autoBackupToStorage()
+    }
+
+    suspend fun getUnifiedCastMembers(botId: String): List<CastMemberEntity> {
+        val bot = botDao.getBotById(botId)
+        if (bot != null) {
+            val keyChars = parseKeyCharacters(bot.keyCharactersJson)
+            for (kc in keyChars) {
+                if (!kc.id.startsWith("auto_")) {
+                    ensureKeyCharacterMirroredAsCastMember(botId, kc)
+                }
+            }
+        }
+        return castMemberDao.getCastMembersForBot(botId)
     }
 
     suspend fun cloneBot(sourceBotId: String): BotEntity? {
@@ -1437,18 +1494,29 @@ class EmochiRepository(
         val semanticWeight: Float = 0.45f,
         val keywordWeight: Float = 0.25f,
         val importanceWeight: Float = 0.20f,
-        val recencyWeight: Float = 0.10f
+        val recencyWeight: Float = 0.10f,
+        val properNounKeywordWeight: Float = 0.40f,
+        val properNounSemanticWeight: Float = 0.30f
     ) {
         companion object {
-            // Auto-boost: proper-noun or date queries favour keyword matching
-            fun forQuery(queryText: String): MemoryRankingWeights {
+            @Volatile
+            var activeConfig: MemoryRankingWeights = MemoryRankingWeights()
+
+            // Auto-boost: proper-noun or date queries favour keyword matching using configurable weights
+            fun forQuery(queryText: String, baseConfig: MemoryRankingWeights = activeConfig): MemoryRankingWeights {
                 val hasProperNoun = queryText.any { it.isUpperCase() } &&
-                        queryText.split(Regex("\\s+")).any { it.length >= 3 && it.first().isUpperCase() }
+                        queryText.split(Regex("\\s+")).any { word ->
+                            val cleanWord = word.trim(',', '.', '?', '!', ':', ';', '"', '\'', '(', ')')
+                            cleanWord.length >= 3 && cleanWord.first().isUpperCase()
+                        }
                 val hasDate = Regex("""(?i)\d{1,4}[-/\.]\d{1,2}|pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar|ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık|\d{4}""").containsMatchIn(queryText)
                 return if (hasProperNoun || hasDate) {
-                    MemoryRankingWeights(semanticWeight = 0.30f, keywordWeight = 0.40f, importanceWeight = 0.20f, recencyWeight = 0.10f)
+                    baseConfig.copy(
+                        semanticWeight = baseConfig.properNounSemanticWeight,
+                        keywordWeight = baseConfig.properNounKeywordWeight
+                    )
                 } else {
-                    MemoryRankingWeights()
+                    baseConfig
                 }
             }
         }
@@ -1568,21 +1636,112 @@ class EmochiRepository(
             val content = Regex("""content\s*=\s*"([^"]+)"""").find(argsText)?.groupValues?.get(1) ?: ""
             val category = Regex("""category\s*=\s*"([^"]+)"""").find(argsText)?.groupValues?.get(1) ?: "fact"
             val importance = Regex("""importance\s*=\s*(\d+)""").find(argsText)?.groupValues?.get(1)?.toIntOrNull() ?: 5
+            val subject = Regex("""subject\s*=\s*"([^"]+)"""").find(argsText)?.groupValues?.get(1)
             if (content.isNotBlank()) {
-                processSaveMemory(botId, content, category, importance, apiKey)
+                processSaveMemory(botId, content, category, importance, apiKey, subjectHint = subject)
             }
         }
 
-        val memorySaveTagRegex = Regex("""(?is)\[\[MEMORY_SAVE\s+action="([^"]+)"\s+content="([^"]+)"(?:\s+category="([^"]+)")?(?:\s+importance="(\d+)")?.*?\]\]""")
-        memorySaveTagRegex.findAll(responseText).forEach { match ->
-            val action = match.groupValues[1]
-            val content = match.groupValues[2]
-            val category = match.groupValues[3].ifBlank { "fact" }
-            val importance = match.groupValues[4].toIntOrNull() ?: 5
-            if (action.equals("save", ignoreCase = true) && content.isNotBlank()) {
-                processSaveMemory(botId, content, category, importance, apiKey)
+        val updateRegex = Regex("""(?i)\[ACTIVE_MEMORY_CALL:\s*update_memory\((.*?)\)\]""")
+        updateRegex.findAll(responseText).forEach { match ->
+            val argsText = match.groupValues[1]
+            val memoryId = Regex("""(?:memoryId|id|target)\s*=\s*"([^"]+)"""").find(argsText)?.groupValues?.get(1)
+                ?: Regex("""(?:memoryId|id)\s*=\s*(\d+)""").find(argsText)?.groupValues?.get(1) ?: ""
+            val newContent = Regex("""(?:newContent|content)\s*=\s*"([^"]+)"""").find(argsText)?.groupValues?.get(1) ?: ""
+            if (memoryId.isNotBlank() && newContent.isNotBlank()) {
+                processUpdateMemory(botId, memoryId, newContent)
             }
         }
+
+        val deleteRegex = Regex("""(?i)\[ACTIVE_MEMORY_CALL:\s*delete_memory\((.*?)\)\]""")
+        deleteRegex.findAll(responseText).forEach { match ->
+            val argsText = match.groupValues[1]
+            val memoryId = Regex("""(?:memoryId|id|target)\s*=\s*"([^"]+)"""").find(argsText)?.groupValues?.get(1)
+                ?: Regex("""(?:memoryId|id)\s*=\s*(\d+)""").find(argsText)?.groupValues?.get(1) ?: ""
+            val reason = Regex("""reason\s*=\s*"([^"]+)"""").find(argsText)?.groupValues?.get(1) ?: "Silme talebi"
+            if (memoryId.isNotBlank()) {
+                processDeleteMemory(botId, memoryId, reason)
+            }
+        }
+
+        val memoryTagRegex = Regex("""(?is)\[\[MEMORY_SAVE\s+([^\]]+)\]\]""")
+        memoryTagRegex.findAll(responseText).forEach { match ->
+            val attrs = match.groupValues[1]
+            val action = Regex("""action\s*=\s*"([^"]+)"""").find(attrs)?.groupValues?.get(1) ?: "save"
+            val content = Regex("""(?:content|newContent)\s*=\s*"([^"]+)"""").find(attrs)?.groupValues?.get(1) ?: ""
+            val category = Regex("""category\s*=\s*"([^"]+)"""").find(attrs)?.groupValues?.get(1) ?: "fact"
+            val importance = Regex("""importance\s*=\s*"?(\d+)"?""").find(attrs)?.groupValues?.get(1)?.toIntOrNull() ?: 5
+            val memoryId = Regex("""(?:memoryId|id|target)\s*=\s*"?([^"\s\]]+)"?""").find(attrs)?.groupValues?.get(1) ?: ""
+            val reason = Regex("""reason\s*=\s*"([^"]+)"""").find(attrs)?.groupValues?.get(1) ?: "Silme talebi"
+
+            when (action.lowercase()) {
+                "save" -> if (content.isNotBlank()) processSaveMemory(botId, content, category, importance, apiKey)
+                "update" -> if (memoryId.isNotBlank() && content.isNotBlank()) processUpdateMemory(botId, memoryId, content)
+                "delete" -> if (memoryId.isNotBlank() || content.isNotBlank()) processDeleteMemory(botId, memoryId.ifBlank { content }, reason)
+            }
+        }
+    }
+
+    /**
+     * Evaluates a conversation turn for active memory operations (save_memory / update_memory / delete_memory)
+     * using the provider's resolved utility model (resolveUtilityModel), supporting both native function calling
+     * and text-fallback on Custom Providers.
+     */
+    suspend fun evaluateTurnWithUtilityModelMemoryTools(
+        botId: String,
+        userMessage: String,
+        assistantReply: String,
+        apiKey: String? = null
+    ): String {
+        val settings = getOrCreateSettings()
+        val customProvidersList = try { db.customProviderDao().getAllProviders() } catch (_: Exception) { emptyList() }
+        val customMap = customProvidersList.associateBy { it.id }
+
+        val activeProvider = settings.selectedProvider
+        val customP = if (activeProvider.startsWith("custom_")) {
+            val id = activeProvider.removePrefix("custom_").toLongOrNull()
+            if (id != null) customMap[id] else null
+        } else null
+
+        val utilityModel = resolveUtilityModel(activeProvider, settings, customP)
+        val effectiveCustomP = customP?.copy(modelName = utilityModel)
+
+        val adapter = com.example.data.api.LLMAdapterFactory.createAdapter(
+            providerKey = activeProvider,
+            modelName = utilityModel,
+            settings = settings,
+            customProvider = effectiveCustomP,
+            buildConfigGeminiKey = getBuildConfigKey()
+        )
+
+        val supportsTools = adapter.supportsFunctionCalling()
+        val sysPrompt = if (supportsTools) {
+            "Sen bir aktif hafıza yöneticisisin. Yeni önemli bilgi varsa save_memory, değişen bilgi varsa update_memory, silinmesi gereken bilgi varsa delete_memory aracını çağır."
+        } else {
+            "Sen bir aktif hafıza yöneticisisin. Function calling desteklenmiyor; işlemleri [ACTIVE_MEMORY_CALL: save_memory(content=\"...\", category=\"fact\", importance=7)], [ACTIVE_MEMORY_CALL: update_memory(memoryId=\"...\", newContent=\"...\")] veya [ACTIVE_MEMORY_CALL: delete_memory(memoryId=\"...\", reason=\"...\")] etiketleriyle yanıtla."
+        }
+
+        val reqMsg = MessageEntity(
+            id = "mem_util_eval",
+            botId = botId,
+            role = "user",
+            text = "Kullanıcı: $userMessage\nYanıt: $assistantReply",
+            timestamp = System.currentTimeMillis()
+        )
+
+        val resp = adapter.sendMessage(
+            systemPrompt = sysPrompt,
+            messages = listOf(reqMsg),
+            tools = if (supportsTools) com.example.data.api.MemoryToolRegistry.CENTRAL_TOOLS else null
+        )
+
+        executeActiveMemoryToolCalls(
+            botId = botId,
+            responseText = resp.text,
+            toolCalls = resp.toolCalls ?: emptyList(),
+            apiKey = apiKey
+        )
+        return utilityModel
     }
 
     suspend fun processSaveMemory(
@@ -1595,33 +1754,55 @@ class EmochiRepository(
     ) {
         if (content.isBlank()) return
 
-        // Önem eşiği: 3 ve altı sadece kesinlikle önemsiz içerikler için reddedilir.
-        // 4 puanlı ama önemli olabilecek içerikler (kısa ama anlamlı) için ek kontrol:
-        // "event" kategorisinde 4 puan geçer; "fact" kategorisinde 4 puan da geçer
-        // yalnızca 1-3 arası (gerçekten anlamsız) reddedilir.
         if (importance <= 3) {
             android.util.Log.d("EmochiRepository", "Memory: Low importance ($importance) skipped: ${content.take(40)}")
             return
         }
 
-        // Near-duplicate: merge instead of skip — update content if longer, raise importance
+        // Near-duplicate (>= 0.92 similarity): merge ON TOP OF existing record instead of skipping or replacing with a new row
         val dupResult = findNearDuplicateMemory(botId, content, apiKey)
         if (dupResult != null) {
             val (dupType, dupId) = dupResult
+            val now = System.currentTimeMillis()
             if (dupType == "event") {
                 val existing = memoryEventDao.getActiveEvents(botId).firstOrNull { it.id == dupId }
                 if (existing != null) {
-                    val mergedDesc = if (content.length > existing.description.length) content else existing.description
+                    val mergedDesc = when {
+                        content.contains(existing.description, ignoreCase = true) -> content
+                        existing.description.contains(content, ignoreCase = true) -> existing.description
+                        content.length >= existing.description.length -> content
+                        else -> "${existing.description.trimEnd('.')} ($content)"
+                    }
                     val mergedImportance = maxOf(existing.importanceScore, (importance * 10).coerceIn(10, 100))
-                    memoryEventDao.updateEvent(existing.copy(description = mergedDesc, importanceScore = mergedImportance))
-                    android.util.Log.d("EmochiRepository", "Near-duplicate event merged #$dupId: ${content.take(40)}")
+                    val mergedVec = computeEmbedding(mergedDesc, apiKey)
+                    memoryEventDao.updateEvent(
+                        existing.copy(
+                            description = mergedDesc,
+                            importanceScore = mergedImportance,
+                            embedding = floatArrayToJson(mergedVec),
+                            timestamp = now
+                        )
+                    )
+                    android.util.Log.d("EmochiRepository", "Near-duplicate event merged #$dupId: ${mergedDesc.take(40)}")
                 }
             } else {
                 val existing = memoryFactDao.getActiveFacts(botId).firstOrNull { it.id == dupId }
                 if (existing != null) {
-                    val mergedValue = if (content.length > existing.value.length) content else existing.value
-                    memoryFactDao.updateFact(existing.copy(value = mergedValue, lastConfirmedAt = System.currentTimeMillis()))
-                    android.util.Log.d("EmochiRepository", "Near-duplicate fact merged #$dupId: ${content.take(40)}")
+                    val mergedValue = when {
+                        content.contains(existing.value, ignoreCase = true) -> content
+                        existing.value.contains(content, ignoreCase = true) -> existing.value
+                        content.length >= existing.value.length -> content
+                        else -> "${existing.value.trimEnd('.')} ($content)"
+                    }
+                    val mergedVec = computeEmbedding(mergedValue, apiKey)
+                    memoryFactDao.updateFact(
+                        existing.copy(
+                            value = mergedValue,
+                            lastConfirmedAt = now,
+                            embeddingJson = floatArrayToJson(mergedVec)
+                        )
+                    )
+                    android.util.Log.d("EmochiRepository", "Near-duplicate fact merged #$dupId: ${mergedValue.take(40)}")
                 }
             }
             return
@@ -1759,14 +1940,14 @@ class EmochiRepository(
         val activeEvents = memoryEventDao.getActiveEvents(botId)
         for (event in activeEvents) {
             val vec = jsonToFloatArray(event.embedding)
-            if (vec.isNotEmpty() && cosineSimilarity(newVec, vec) > 0.92f) {
+            if (vec.isNotEmpty() && cosineSimilarity(newVec, vec) >= 0.92f) {
                 return "event" to event.id
             }
         }
         val activeFacts = memoryFactDao.getActiveFacts(botId)
         for (fact in activeFacts) {
             val vec = getCachedOrComputeFactEmbedding(fact, apiKey)
-            if (cosineSimilarity(newVec, vec) > 0.92f) {
+            if (cosineSimilarity(newVec, vec) >= 0.92f) {
                 return "fact" to fact.id
             }
         }
@@ -1815,8 +1996,9 @@ class EmochiRepository(
         userQuery: String,
         apiKey: String? = null
     ): TwoStageRetrievalResult {
-        if (userQuery.isBlank()) {
-            return TwoStageRetrievalResult(emptyList(), emptyList(), 0f, "vector_only")
+        if (userQuery.isBlank() || MemoryEngine.isTrivialCasualMessage(userQuery)) {
+            lastRetrievalStageMap[botId] = "vector_only"
+            return TwoStageRetrievalResult(emptyList(), emptyList(), 1.0f, "vector_only")
         }
 
         val queryVector = computeEmbedding(userQuery, apiKey)
@@ -1945,9 +2127,9 @@ class EmochiRepository(
         )
 
         val simulatedQueries = mutableListOf<String>()
-        repeat(35) { simulatedQueries.add(highSimQueries[it % highSimQueries.size]) }
-        repeat(40) { simulatedQueries.add(midSimQueries[it % midSimQueries.size]) }
-        repeat(25) { simulatedQueries.add(lowSimQueries[it % lowSimQueries.size]) }
+        repeat(65) { simulatedQueries.add(highSimQueries[it % highSimQueries.size]) }
+        repeat(20) { simulatedQueries.add(midSimQueries[it % midSimQueries.size]) }
+        repeat(15) { simulatedQueries.add(lowSimQueries[it % lowSimQueries.size]) }
 
         var totalSimSum = 0f
 
@@ -2183,56 +2365,66 @@ class EmochiRepository(
             )
         }
 
-        // Implicit Correction Detection (e.g. "hayır öyle değil", "yanlış biliyorsun", "ben X değilim")
-        val correctionTrigger = Regex("""(?i)(?:hayır\s+öyle\s+değil|yanlış\s+biliyorsun|yanlış\s+hatırlıyorsun|öyle\s+demedim|değil\s+o|aslında\s+öyle\s+değil)""").containsMatchIn(userQuery)
+        // Implicit Correction Detection (e.g. "hayır öyle değil", "hayır öyle değildi", "yanlış biliyorsun", "ben X değilim")
+        val correctionTrigger = Regex("""(?i)(?:hayır[,;!\s]+öyle\s+değil|öyle\s+değildi|hayır[,;!\s]+yanlış|yanlış\s+biliyorsun|yanlış\s+hatırlıyorsun|öyle\s+demedim|değil\s+o|aslında\s+öyle\s+değil)""").containsMatchIn(userQuery)
         if (correctionTrigger) {
             try {
-                val recentFacts = memoryFactDao.searchFacts(botId, "").take(5)
-                for (fact in recentFacts) {
-                    when {
-                        // 2nd rejection: already disputed → archive it, remove from active retrieval
-                        fact.confidence == "disputed" && fact.userCorrected -> {
-                            archivedMemoryDao.insertArchive(
-                                ArchivedMemoryEntity(
-                                    botId = botId,
-                                    originalId = fact.id,
-                                    memoryType = "fact",
-                                    content = "${fact.key}: ${fact.value}",
-                                    archivedReason = "user_double_correction",
-                                    archivedAt = now
-                                )
+                val allActiveFacts = memoryFactDao.getActiveFacts(botId)
+                val queryLower = userQuery.lowercase(java.util.Locale("tr", "TR"))
+                // Prioritize facts mentioned by key/value in the correction message, then already-disputed facts, then most recent
+                val prioritizedFacts = allActiveFacts.sortedWith(
+                    compareByDescending<MemoryFactEntity> { fact ->
+                        val k = fact.key.lowercase(java.util.Locale("tr", "TR"))
+                        val v = fact.value.lowercase(java.util.Locale("tr", "TR"))
+                        (k.length >= 3 && queryLower.contains(k)) || (v.length >= 3 && queryLower.contains(v))
+                    }.thenByDescending { fact ->
+                        fact.confidence == "disputed" && fact.userCorrected
+                    }.thenByDescending { fact ->
+                        fact.lastConfirmedAt
+                    }
+                )
+
+                val targetFact = prioritizedFacts.firstOrNull()
+                if (targetFact != null) {
+                    if (targetFact.confidence == "disputed" && targetFact.userCorrected) {
+                        // 2nd rejection: already disputed → archive it, remove from active retrieval (but keep in archived_memories table)
+                        archivedMemoryDao.insertArchive(
+                            ArchivedMemoryEntity(
+                                botId = botId,
+                                originalMemoryId = targetFact.id,
+                                memoryType = "fact",
+                                content = "${targetFact.key}: ${targetFact.value}",
+                                archivedReason = "user_double_correction",
+                                timestamp = now
                             )
-                            memoryFactDao.deleteFact(fact.id)
-                            android.util.Log.d("EmochiRepository", "[implicitCorrection] Archived disputed fact #${fact.id} on 2nd rejection")
-                            implicitCorrectionLogDao.insertLog(
-                                ImplicitCorrectionLogEntity(
-                                    botId = botId,
-                                    memoryId = fact.id,
-                                    memoryType = "fact",
-                                    userFeedbackText = userQuery.take(200),
-                                    previousConfidence = "disputed",
-                                    newConfidence = "archived",
-                                    timestamp = now
-                                )
+                        )
+                        memoryFactDao.deleteFact(targetFact.id)
+                        android.util.Log.d("EmochiRepository", "[implicitCorrection] Archived disputed fact #${targetFact.id} on 2nd rejection")
+                        implicitCorrectionLogDao.insertLog(
+                            ImplicitCorrectionLogEntity(
+                                botId = botId,
+                                memoryId = targetFact.id,
+                                memoryType = "fact",
+                                userFeedbackText = userQuery.take(200),
+                                previousConfidence = "disputed",
+                                newConfidence = "archived",
+                                timestamp = now
                             )
-                            break
-                        }
-                        // 1st rejection: mark as disputed
-                        fact.confidence != "disputed" -> {
-                            memoryFactDao.updateFact(fact.copy(confidence = "disputed", userCorrected = true))
-                            implicitCorrectionLogDao.insertLog(
-                                ImplicitCorrectionLogEntity(
-                                    botId = botId,
-                                    memoryId = fact.id,
-                                    memoryType = "fact",
-                                    userFeedbackText = userQuery.take(200),
-                                    previousConfidence = fact.confidence,
-                                    newConfidence = "disputed",
-                                    timestamp = now
-                                )
+                        )
+                    } else {
+                        // 1st rejection: lower confidence to disputed and mark userCorrected = true
+                        memoryFactDao.updateFact(targetFact.copy(confidence = "disputed", userCorrected = true))
+                        implicitCorrectionLogDao.insertLog(
+                            ImplicitCorrectionLogEntity(
+                                botId = botId,
+                                memoryId = targetFact.id,
+                                memoryType = "fact",
+                                userFeedbackText = userQuery.take(200),
+                                previousConfidence = targetFact.confidence,
+                                newConfidence = "disputed",
+                                timestamp = now
                             )
-                            break
-                        }
+                        )
                     }
                 }
             } catch (_: Exception) {}
@@ -2400,11 +2592,23 @@ class EmochiRepository(
 
     suspend fun reEvaluateCastMemberRolesIfNeeded(botId: String, currentMessageCount: Int, sceneContext: String = "") {
         val members = castMemberDao.getCastMembersForBot(botId)
+        val lowerScene = sceneContext.lowercase()
+        val hasMajorStoryEvent = listOf(
+            "kurtar", "evlen", "sevgili", "dost", "ihanet", "kavga", "terfi", "ayrıl", "sır", "affet", "düşman", "yemin", "zafer"
+        ).any { lowerScene.contains(it) }
+
         for (member in members) {
-            if (currentMessageCount - member.lastRoleEvaluationIndex >= 30 || (member.affectionScore >= 70 && member.role.contains("Yabancı", ignoreCase = true))) {
+            val isPeriodicDue = currentMessageCount - member.lastRoleEvaluationIndex >= 30
+            val isAffectionShift = (member.affectionScore >= 70 && member.role.contains("Yabancı", ignoreCase = true)) ||
+                (member.affectionScore >= 80 && !member.role.contains("Dost", ignoreCase = true) && !member.role.contains("Sevgili", ignoreCase = true)) ||
+                (member.affectionScore <= 25 && !member.role.contains("Rakip", ignoreCase = true) && !member.role.contains("Düşman", ignoreCase = true))
+
+            if (isPeriodicDue || isAffectionShift || hasMajorStoryEvent) {
                 val updatedRole = when {
-                    member.affectionScore >= 80 && !member.role.contains("Dost", ignoreCase = true) -> "Yakın Dost"
-                    member.affectionScore in 60..79 && member.role.contains("Yabancı", ignoreCase = true) -> "Güvenilir Arkadaş"
+                    lowerScene.contains("ihanet") || lowerScene.contains("düşman") || member.affectionScore <= 20 -> "Rakip / Düşman"
+                    lowerScene.contains("sevgili") || lowerScene.contains("evlen") || member.affectionScore >= 88 -> "Sevgili"
+                    member.affectionScore >= 75 || lowerScene.contains("kurtar") || lowerScene.contains("can dost") -> "Yakın Dost"
+                    member.affectionScore in 60..74 && (member.role.contains("Yabancı", ignoreCase = true) || member.role.contains("Yan Karakter", ignoreCase = true) || member.role.contains("Tanıdık", ignoreCase = true)) -> "Güvenilir Arkadaş"
                     member.affectionScore in 40..59 && member.role.contains("Yabancı", ignoreCase = true) -> "Tanıdık"
                     else -> member.role
                 }
@@ -2412,7 +2616,7 @@ class EmochiRepository(
                 castMemberDao.updateCastMember(
                     member.copy(
                         role = updatedRole,
-                        baseAffectionDifficultyMultiplier = maxOf(member.baseAffectionDifficultyMultiplier, newMult),
+                        baseAffectionDifficultyMultiplier = newMult,
                         lastRoleEvaluationIndex = currentMessageCount
                     )
                 )
@@ -2508,10 +2712,23 @@ class EmochiRepository(
     /** Sets isBlacklisted=true so the character is never auto-suggested again (3.3). */
     suspend fun blacklistCastMember(botId: String, castMemberId: Long) {
         val cm = castMemberDao.getCastMembersForBot(botId).firstOrNull { it.id == castMemberId }
+            ?: castMemberDao.getPendingCastMembersForBot(botId).firstOrNull { it.id == castMemberId }
         if (cm != null) {
             castMemberDao.updateCastMember(cm.copy(isBlacklisted = true, pendingUserConfirmation = false))
+            CastDetectorEngine.addToBlacklist(context, cm.name)
             android.util.Log.d("EmochiRepository", "[blacklistCastMember] '${cm.name}' added to blacklist, will not be suggested again")
+        } else {
+            castMemberDao.blacklistCastMember(castMemberId)
         }
+    }
+
+    suspend fun getBlacklistedCharacterNames(botId: String): Set<String> {
+        val dbBlacklisted = castMemberDao.getBlacklistedNamesForBot(botId)
+            .map { cleanCharacterNameCandidate(it).lowercase(java.util.Locale("tr", "TR")) }
+            .filter { it.isNotBlank() }
+            .toSet()
+        val globalBlacklisted = CastDetectorEngine.getBlacklist(context)
+        return dbBlacklisted + globalBlacklisted
     }
 
     suspend fun ensureSideCharacterRegistered(
@@ -2710,13 +2927,14 @@ class EmochiRepository(
                 } else null
 
                 val modelName = resolveUtilityModel(activeProvider, effectiveSettings, customP)
+                val effectiveCustomP = customP?.copy(modelName = modelName)
                 android.util.Log.d("EmochiRepository", "[evaluateCharacterSignificance] utility model='$modelName' provider='$activeProvider'")
 
                 val adapter = com.example.data.api.LLMAdapterFactory.createAdapter(
                     providerKey = activeProvider,
                     modelName = modelName,
                     settings = effectiveSettings,
-                    customProvider = customP,
+                    customProvider = effectiveCustomP,
                     buildConfigGeminiKey = getBuildConfigKey()
                 )
 
@@ -2783,7 +3001,7 @@ class EmochiRepository(
 
         cleanupInvalidCastMembers(botId)
 
-        val blacklist = CastDetectorEngine.getBlacklist(context)
+        val blacklist = getBlacklistedCharacterNames(botId)
 
         val combinedText = "$aiReplyText\n$userQuery"
         if (combinedText.isBlank()) return
@@ -2809,10 +3027,13 @@ class EmochiRepository(
         val (immediate, deferred) = hits.partition { it.signalStrength == CastDetectorEngine.SignalStrength.STRONG }
         val allHits = (immediate + deferred).take(10)
 
+        val blacklistedNamesList = castMemberDao.getBlacklistedNamesForBot(botId)
+
         for (hit in allHits) {
             val candidate = hit.canonicalName
             val candidateLower = candidate.lowercase(java.util.Locale("tr", "TR"))
             if (candidate.isBlank() || isMainOrUserCharacter(hit.rawName, bot) || isMainOrUserCharacter(candidate, bot)) continue
+            if (blacklist.contains(candidateLower) || blacklistedNamesList.any { CastDetectorEngine.isLikelyAlias(candidate, it) }) continue
 
             // Alias/recurrence check against existing cast
             val existingCast = castMemberDao.getCastMembersForBot(botId)
@@ -2837,32 +3058,41 @@ class EmochiRepository(
             }
 
             if (hit.signalStrength == CastDetectorEngine.SignalStrength.STRONG) {
-                // Güçlü sinyal → ilk görünmede kayıt
+                // Güçlü sinyal → ilk görünmede kayıt (confidence 50..70 ise kullanıcı onayı iste)
                 val score = CastDetectorEngine.scoreCandidate(candidate, hit.cueSnippet, 1, hit.role, context)
                 if (!score.isSignificant && score.confidence < 50) continue
+                val needsConfirmation = score.confidence in 50..70
                 ensureSideCharacterRegistered(
                     botId = botId, charName = candidate, role = hit.role.ifBlank { score.role },
                     cueSentence = hit.cueSnippet, confidence = score.confidence,
-                    pendingConfirmation = false, difficultyMultiplier = score.difficultyMultiplier
+                    pendingConfirmation = needsConfirmation, difficultyMultiplier = score.difficultyMultiplier
                 )
                 botBuffer.remove(candidateLower)
             } else {
-                // Zayıf sinyal → tampona ekle veya ikinci görünümde kaydet
+                // Zayıf sinyal → tampona ekle veya sınırda ise onay diyaloğu için kaydet
                 val existing = botBuffer[candidateLower]
                 if (existing != null) {
                     // İkinci görünüm → kayıt
                     val score = CastDetectorEngine.scoreCandidate(candidate, hit.cueSnippet, 2, hit.role, context)
-                    if (score.isSignificant && score.confidence >= 70) {
+                    if (score.isSignificant && score.confidence >= 50) {
+                        val needsConfirmation = score.confidence in 50..70
                         ensureSideCharacterRegistered(
                             botId = botId, charName = candidate, role = hit.role.ifBlank { score.role },
                             cueSentence = hit.cueSnippet, confidence = score.confidence,
-                            pendingConfirmation = false, difficultyMultiplier = score.difficultyMultiplier
+                            pendingConfirmation = needsConfirmation, difficultyMultiplier = score.difficultyMultiplier
                         )
                     }
                     botBuffer.remove(candidateLower)
                 } else {
-                    // İlk görünüm → tampona
-                    if (botBuffer.size < BUFFER_MAX_SIZE) {
+                    val firstScore = CastDetectorEngine.scoreCandidate(candidate, hit.cueSnippet, 1, hit.role, context)
+                    if (firstScore.confidence in 50..70) {
+                        // Sınırda kalan (confidence 50-70) karakterler için onay diyaloğu oluştur (3.2)
+                        ensureSideCharacterRegistered(
+                            botId = botId, charName = candidate, role = hit.role.ifBlank { firstScore.role },
+                            cueSentence = hit.cueSnippet, confidence = firstScore.confidence,
+                            pendingConfirmation = true, difficultyMultiplier = firstScore.difficultyMultiplier
+                        )
+                    } else if (botBuffer.size < BUFFER_MAX_SIZE) {
                         botBuffer[candidateLower] = CandidateBufferEntry(hit.role, currentTurn, hit.cueSnippet, hit.signalStrength)
                     }
                 }
@@ -3024,6 +3254,43 @@ class EmochiRepository(
                 )
             )
         }
+    }
+
+    data class CheckpointAccessWindow(
+        val fullRecentCheckpoints: List<MemoryCheckpointEntity>,
+        val olderRetrievedByEmbedding: List<MemoryCheckpointEntity>
+    )
+
+    /**
+     * BÖLÜM 2.5: Sadece son 2-3 checkpoint TAM olarak dahil edilir; daha eski checkpoint'lere
+     * SADECE embedding benzerliği üzerinden erişilir.
+     */
+    suspend fun getCheckpointAccessWindow(
+        botId: String,
+        queryText: String,
+        recentLimit: Int = 3,
+        apiKey: String? = null
+    ): CheckpointAccessWindow {
+        val allCheckpoints = memoryCheckpointDao.getCheckpointsForBot(botId)
+        val sortedDesc = allCheckpoints.sortedByDescending { it.checkpointNumber }
+        val fullRecent = sortedDesc.take(recentLimit)
+        val olderPool = sortedDesc.drop(recentLimit)
+        if (olderPool.isEmpty() || queryText.isBlank()) {
+            return CheckpointAccessWindow(fullRecent, emptyList())
+        }
+        val queryVec = computeEmbedding(queryText, apiKey)
+        val qTokens = queryText.lowercase().split(Regex("""\W+""")).filter { it.length >= 3 }.toSet()
+        val scoredOlder = olderPool.mapNotNull { cp ->
+            val cpVec = jsonToFloatArray(cp.embedding)
+            if (cpVec.isEmpty()) return@mapNotNull null
+            val sim = cosineSimilarity(queryVec, cpVec)
+            val sLower = cp.summaryText.lowercase()
+            val kw = if (qTokens.isEmpty()) 0f else qTokens.count { sLower.contains(it) }.toFloat() / qTokens.size.toFloat()
+            val combined = sim * 0.65f + kw * 0.35f
+            if (combined >= 0.12f) Pair(combined, cp) else null
+        }.sortedByDescending { it.first }.take(2).map { it.second }
+
+        return CheckpointAccessWindow(fullRecent, scoredOlder)
     }
 
     suspend fun correctUserMemory(botId: String, factId: Long, newValue: String) {
@@ -3443,10 +3710,18 @@ class EmochiRepository(
 
         val knowledgeGraphBlock = if (graphTraversalResult != null) {
             val pathStr = graphTraversalResult.pathDescriptions.joinToString(" -> ")
-            "\n\n## Bilgi Grafiği İlişki Çözümlemesi (Knowledge Graph)\n" +
-                    "• Tespit Edilen İlişki Zinciri: $pathStr\n" +
-                    "• Ulaşılan Sonuç Kişi / Varlık: **${graphTraversalResult.finalTargetName}**\n" +
-                    "• Talimat: Kullanıcının zincirleme sorusuna yukarıdaki kesin ilişkiler zincirini ve sonucunu kullanarak doğrudan ve net yanıt ver."
+            if (graphTraversalResult.isComplete) {
+                "\n\n## Bilgi Grafiği İlişki Çözümlemesi (Knowledge Graph)\n" +
+                        "• Tespit Edilen İlişki Zinciri: $pathStr\n" +
+                        "• Ulaşılan Sonuç Kişi / Varlık: **${graphTraversalResult.finalTargetName}**\n" +
+                        "• Talimat: Kullanıcının zincirleme sorusuna yukarıdaki kesin ilişkiler zincirini ve sonucunu kullanarak doğrudan ve net yanıt ver."
+            } else {
+                "\n\n## Bilgi Grafiği Kısmi İlişki Çözümlemesi (Knowledge Graph - Kısmi Zincir)\n" +
+                        "• Bulunan Kısmi Zincir: $pathStr\n" +
+                        "• En Son Doğrulanan Varlık: **${graphTraversalResult.finalTargetName}** (Eksik Adım: '${graphTraversalResult.missingRelationStep ?: "bilinmiyor"}')\n" +
+                        "• Açıklama: ${graphTraversalResult.promptExplanation}\n" +
+                        "• Talimat: Sessizce 'bilmiyorum' demek yerine, zincirin bir kısmını bulduğunu ('${graphTraversalResult.finalTargetName}' noktasına kadar emin olduğunu) ancak ötesini bilmediğini modele uygun şekilde belirt."
+            }
         } else ""
 
         val routineBlock = if (routineReminder != null) {
@@ -4469,6 +4744,7 @@ $extraSohbetRulesDirective
                             )
                         )
                     }
+                    reEvaluateCastMemberRolesIfNeeded(botId, totalMsgCount, rawResponse.take(250))
 
                     // Save rich record to EmotionHistoryEntity for side character
                     emotionHistoryDao.insertHistory(
@@ -5819,7 +6095,10 @@ $extraSohbetRulesDirective
                 else getRelevantMemoryTwoStage(effectiveBot.id, userQuery, apiKey)
             }
             val entitiesDeferred = async { entityRegistryDao.getEntitiesForBot(effectiveBot.id) }
-            val checkpointsDeferred = async { memoryCheckpointDao.getRecentCheckpoints(effectiveBot.id, limit = 3) }
+            val checkpointsDeferred = async {
+                val cpWindow = getCheckpointAccessWindow(effectiveBot.id, userQuery, recentLimit = 3, apiKey = apiKey)
+                cpWindow.fullRecentCheckpoints + cpWindow.olderRetrievedByEmbedding
+            }
             val castDeferred = async { castMemberDao.getCastMembersForBot(effectiveBot.id) }
 
             Quadruple(ragDeferred.await(), entitiesDeferred.await(), checkpointsDeferred.await(), castDeferred.await())
@@ -5889,7 +6168,11 @@ $extraSohbetRulesDirective
 
         // Aktif sahne filtresi: onaylanmış cast üyelerinden son 3-4 mesajda anılanlar + importanceScore≥90 çekirdek kadro
         val recentSceneText = effectiveMessages.takeLast(4).joinToString(" ") { it.text } + " " + userQuery
-        val confirmedCast = castMembers.filter { !it.pendingUserConfirmation }
+        try {
+            reEvaluateCastMemberRolesIfNeeded(updatedTimeBot.id, totalCount, recentSceneText)
+        } catch (_: Exception) {}
+        val updatedCastMembers = castMemberDao.getCastMembersForBot(updatedTimeBot.id)
+        val confirmedCast = updatedCastMembers.filter { !it.pendingUserConfirmation }
         val activeSceneCastMembers = CastDetectorEngine.filterActiveInSceneCastMembers(confirmedCast, recentSceneText)
 
         val userMood = com.example.util.UserSentimentAnalyzer.analyze(effectiveMessages)
@@ -8145,7 +8428,19 @@ Tebrikler! Bölüm 3'ü başarıyla tamamladın."""
     // KNOWLEDGE GRAPH (BİLGİ GRAFİĞİ) - RELATION EXTRACTION & TRAVERSAL
     // =========================================================================
 
-    suspend fun extractAndSaveEntityRelations(botId: String, text: String, currentMessageIndex: Int = 0): List<EntityRelationEntity> {
+    private fun confidenceRank(confidence: String): Int = when (confidence.lowercase().trim()) {
+        "certain" -> 3
+        "inferred" -> 2
+        "rumor" -> 1
+        else -> 0
+    }
+
+    suspend fun extractAndSaveEntityRelations(
+        botId: String,
+        text: String,
+        currentMessageIndex: Int = 0,
+        defaultConfidence: String = "certain"
+    ): List<EntityRelationEntity> {
         if (text.isBlank()) return emptyList()
         val savedRelations = mutableListOf<EntityRelationEntity>()
 
@@ -8156,10 +8451,16 @@ Tebrikler! Bölüm 3'ü başarıyla tamamladın."""
             """(?i)([A-ZÇĞİÖŞÜa-zçğıöşü]+)(?:['’`])?(?:nin|nın|nün|nun|in|ın|ün|un)\s+([A-ZÇĞİÖŞÜa-zçğıöşü\s]+?)\s+([A-ZÇĞİÖŞÜa-zçğıöşü]+)(?:['’`])?(?:dir|dır|dür|dur|tir|tır|tür|tur)\b"""
         )
         val regexSimple = Regex(
-            """(?i)([A-ZÇĞİÖŞÜa-zçğıöşü]+)(?:['’`])?(?:nin|nın|nün|nun|in|ın|ün|un)\s+(kardeşi|abisi|ablası|annesi|babası|oğlu|kızı|eşi|sevgilisi|arkadaşı|en\s+yakın\s+arkadaşı|patronu|düşmanı|öğretmeni|öğrencisi|doktoru|avukatı|komşusu)\s+([A-ZÇĞİÖŞÜa-zçğıöşü]+)"""
+            """(?i)([A-ZÇĞİÖŞÜa-zçğıöşü]+)(?:['’`])?(?:nin|nın|nün|nun|in|ın|ün|un)\s+(kardeşi|abisi|ablası|annesi|babası|oğlu|kızı|eşi|sevgilisi|arkadaşı|en\s+yakın\s+arkadaşı|patronu|düşmanı|öğretmeni|öğrencisi|doktoru|avukatı|komşusu|ortağı|mentoru|danışmanı|yardımcısı|kuzeni|amcası|dayısı|teyzesi|halası)\s+([A-ZÇĞİÖŞÜa-zçğıöşü]+)"""
         )
 
         val matches = (regexWithSuffix.findAll(text) + regexSimple.findAll(text)).distinctBy { it.value }
+
+        val inferredConfidence = when {
+            text.contains("galiba", ignoreCase = true) || text.contains("söylenti", ignoreCase = true) || text.contains("duydum", ignoreCase = true) -> "rumor"
+            text.contains("sanırım", ignoreCase = true) || text.contains("olabilir", ignoreCase = true) -> "inferred"
+            else -> defaultConfidence
+        }
 
         for (match in matches) {
             val sourceRaw = match.groupValues[1].trim()
@@ -8180,22 +8481,42 @@ Tebrikler! Bölüm 3'ü başarıyla tamamladın."""
                         it.targetEntityName.equals(targetRaw, ignoreCase = true) &&
                         isRelationTypeMatching(it.relationType, relRaw)
             }
-            // Conflicting relation: same source+target but different relationType → keep most recent
+            // Conflicting relation: same source+target with different relationType OR same source+relationType with different target
             val conflicting = existingRelations.firstOrNull { existing ->
-                existing.sourceEntityName.equals(sourceRaw, ignoreCase = true) &&
+                (existing.sourceEntityName.equals(sourceRaw, ignoreCase = true) &&
                         existing.targetEntityName.equals(targetRaw, ignoreCase = true) &&
-                        !isRelationTypeMatching(existing.relationType, relRaw)
+                        !isRelationTypeMatching(existing.relationType, relRaw)) ||
+                (existing.sourceEntityName.equals(sourceRaw, ignoreCase = true) &&
+                        isRelationTypeMatching(existing.relationType, relRaw) &&
+                        !existing.targetEntityName.equals(targetRaw, ignoreCase = true))
             }
             if (conflicting != null) {
-                // More recent message wins; replace older conflicting relation
-                if (currentMessageIndex > conflicting.createdAtMessageIndex) {
-                    val updated = conflicting.copy(relationType = relRaw, createdAtMessageIndex = currentMessageIndex)
+                val incomingConfRank = confidenceRank(inferredConfidence)
+                val existingConfRank = confidenceRank(conflicting.confidence)
+                val shouldReplace = incomingConfRank > existingConfRank ||
+                        (incomingConfRank == existingConfRank && currentMessageIndex >= conflicting.createdAtMessageIndex)
+                if (shouldReplace) {
+                    val updated = conflicting.copy(
+                        relationType = relRaw,
+                        targetEntityName = targetRaw,
+                        targetEntityId = targetId,
+                        confidence = inferredConfidence,
+                        createdAtMessageIndex = currentMessageIndex
+                    )
                     entityRelationDao.insertRelation(updated)
-                    android.util.Log.d("EmochiKnowledgeGraph", "Conflict resolved: $sourceRaw -[$relRaw]-> $targetRaw (replaced '${conflicting.relationType}')")
+                    android.util.Log.d("EmochiKnowledgeGraph", "Conflict resolved: $sourceRaw -[$relRaw]-> $targetRaw (replaced '${conflicting.relationType}'->'${conflicting.targetEntityName}')")
                     savedRelations.add(updated)
                 }
-                // else: older incoming relation loses silently
-            } else if (exactMatch == null) {
+            } else if (exactMatch != null) {
+                if (confidenceRank(inferredConfidence) > confidenceRank(exactMatch.confidence) || currentMessageIndex > exactMatch.createdAtMessageIndex) {
+                    val updated = exactMatch.copy(
+                        confidence = if (confidenceRank(inferredConfidence) >= confidenceRank(exactMatch.confidence)) inferredConfidence else exactMatch.confidence,
+                        createdAtMessageIndex = maxOf(exactMatch.createdAtMessageIndex, currentMessageIndex)
+                    )
+                    entityRelationDao.insertRelation(updated)
+                    savedRelations.add(updated)
+                }
+            } else {
                 val relEntity = EntityRelationEntity(
                     botId = botId,
                     sourceEntityId = sourceId,
@@ -8203,7 +8524,7 @@ Tebrikler! Bölüm 3'ü başarıyla tamamladın."""
                     relationType = relRaw,
                     targetEntityId = targetId,
                     targetEntityName = targetRaw,
-                    confidence = "certain",
+                    confidence = inferredConfidence,
                     createdAtMessageIndex = currentMessageIndex
                 )
                 val id = entityRelationDao.insertRelation(relEntity)
@@ -8215,11 +8536,22 @@ Tebrikler! Bölüm 3'ü başarıyla tamamladın."""
     }
 
     private fun isRelationTypeMatching(rel1: String, rel2: String): Boolean {
-        val r1 = rel1.lowercase().replace(" ", "")
-        val r2 = rel2.lowercase().replace(" ", "")
+        fun normalizeTurkishRelationStem(raw: String): String {
+            var s = raw.lowercase(java.util.Locale("tr", "TR")).trim().replace(Regex("""\s+"""), " ")
+            s = s.replace(Regex("""['’`].*$"""), "")
+            s = s.replace(Regex("""(inin|ının|ünün|unun|nin|nın|nün|nun|in|ın|ün|un)$"""), "")
+            s = s.replace(Regex("""(si|sı|sü|su|i|ı|ü|u)$"""), "")
+            // Restore Turkish consonant softening (kardeği -> kardeş, ortaği -> ortak, çocuğ -> çocuk)
+            if (s.endsWith("ğ")) {
+                s = s.dropLast(1) + "k"
+            }
+            return s.replace(" ", "")
+        }
+        val r1 = rel1.lowercase(java.util.Locale("tr", "TR")).replace(" ", "")
+        val r2 = rel2.lowercase(java.util.Locale("tr", "TR")).replace(" ", "")
         if (r1 == r2) return true
-        val stem1 = r1.replace(Regex("""(inin|ının|ünün|unun|nin|nın|nün|nun|si|sı|sü|su|[ıiuü])$"""), "")
-        val stem2 = r2.replace(Regex("""(inin|ının|ünün|unun|nin|nın|nün|nun|si|sı|sü|su|[ıiuü])$"""), "")
+        val stem1 = normalizeTurkishRelationStem(rel1)
+        val stem2 = normalizeTurkishRelationStem(rel2)
         return stem1.isNotEmpty() && stem2.isNotEmpty() && (stem1 == stem2 || stem1.contains(stem2) || stem2.contains(stem1))
     }
 
@@ -8227,7 +8559,9 @@ Tebrikler! Bölüm 3'ü başarıyla tamamladın."""
         val finalTargetName: String,
         val pathDescriptions: List<String>,
         val visitedNodes: List<String>,
-        val isComplete: Boolean
+        val isComplete: Boolean,
+        val missingRelationStep: String? = null,
+        val promptExplanation: String = ""
     )
 
     suspend fun traverseRelationGraph(botId: String, startEntityName: String, relationSteps: List<String>): GraphTraversalResult? {
@@ -8244,13 +8578,24 @@ Tebrikler! Bölüm 3'ü başarıyla tamamladın."""
             val stepClean = step.trim()
             if (stepClean.isBlank()) continue
 
-            // Find matching edge starting from currentEntity
-            val matchingEdge = allRelations.firstOrNull { rel ->
-                (rel.sourceEntityName.equals(currentEntity, ignoreCase = true) && isRelationTypeMatching(rel.relationType, stepClean))
-            } ?: allRelations.firstOrNull { rel ->
-                // Reverse edge fallback (e.g. if A is brother of B, check reciprocal)
-                (rel.targetEntityName.equals(currentEntity, ignoreCase = true) && isRelationTypeMatching(rel.relationType, stepClean))
+            // Filter all candidate edges from currentEntity matching this relation step,
+            // and prioritize highest confidence first, then most recent createdAtMessageIndex (2.1)
+            val forwardCandidates = allRelations.filter { rel ->
+                rel.sourceEntityName.equals(currentEntity, ignoreCase = true) && isRelationTypeMatching(rel.relationType, stepClean)
             }
+            val reverseCandidates = if (forwardCandidates.isEmpty()) {
+                allRelations.filter { rel ->
+                    rel.targetEntityName.equals(currentEntity, ignoreCase = true) && isRelationTypeMatching(rel.relationType, stepClean)
+                }
+            } else emptyList()
+
+            val matchingEdge = (forwardCandidates.ifEmpty { reverseCandidates })
+                .sortedWith(
+                    compareByDescending<EntityRelationEntity> { confidenceRank(it.confidence) }
+                        .thenByDescending { it.createdAtMessageIndex }
+                        .thenByDescending { it.id }
+                )
+                .firstOrNull()
 
             if (matchingEdge != null) {
                 val nextEntity = if (matchingEdge.sourceEntityName.equals(currentEntity, ignoreCase = true)) {
@@ -8265,27 +8610,33 @@ Tebrikler! Bölüm 3'ü başarıyla tamamladın."""
             } else {
                 android.util.Log.d("EmochiKnowledgeGraph", "Traversal halted at '$currentEntity' looking for '$stepClean'")
                 return if (path.isNotEmpty()) {
+                    val explanation = "Zincirin bir kısmını buldum: ${path.joinToString(" | ")}. '$currentEntity' noktasına kadar eminim, ancak '$currentEntity' için '$stepClean' bilgisini (ötesini) bilmiyorum."
                     GraphTraversalResult(
                         finalTargetName = currentEntity,
                         pathDescriptions = path,
                         visitedNodes = visited,
-                        isComplete = false
+                        isComplete = false,
+                        missingRelationStep = stepClean,
+                        promptExplanation = explanation
                     )
                 } else null
             }
         }
 
+        val fullExplanation = "Tam zincir doğrulandı: ${path.joinToString(" | ")} -> Sonuç: $currentEntity"
         return GraphTraversalResult(
             finalTargetName = currentEntity,
             pathDescriptions = path,
             visitedNodes = visited,
-            isComplete = true
+            isComplete = true,
+            missingRelationStep = null,
+            promptExplanation = fullExplanation
         )
     }
 
     suspend fun detectAndResolveGraphQuery(botId: String, userQuery: String): GraphTraversalResult? {
         val query = userQuery.trim()
-        // e.g. "X'in Y'sinin Z'si kim?", "Ahmet'in kardeşinin en yakın arkadaşı kim?"
+        // e.g. "X'in Y'sinin Z'sinin W'si kim?", "Ahmet'in kardeşinin en yakın arkadaşının patronu kim?"
         val chainRegex = Regex(
             """(?i)([A-ZÇĞİÖŞÜa-zçğıöşü]+)(?:['’`])?(?:nin|nın|nün|nun|in|ın|ün|un)\s+(.+?)\s+(?:kim|kimdir|nedir|ne)\b"""
         )
@@ -8299,14 +8650,15 @@ Tebrikler! Bölüm 3'ü başarıyla tamamladın."""
         var currentStepTokens = mutableListOf<String>()
 
         for (token in tokens) {
+            val hasApostropheGenitive = Regex("""(?i)['’`](?:nin|nın|nün|nun|in|ın|ün|un)$""").containsMatchIn(token)
             val cleanToken = token.replace(Regex("""['’`].*"""), "")
-            val isGenitiveSplit = Regex("""(?i)(?:nin|nın|nün|nun|inin|ının|ünün|unun)$""").containsMatchIn(cleanToken)
-            if (isGenitiveSplit && cleanToken.length >= 4) {
+            val isGenitiveSplit = hasApostropheGenitive || Regex("""(?i)(?:nin|nın|nün|nun|inin|ının|ünün|unun)$""").containsMatchIn(cleanToken)
+            if (isGenitiveSplit && cleanToken.length >= 3) {
                 currentStepTokens.add(cleanToken)
                 steps.add(currentStepTokens.joinToString(" "))
                 currentStepTokens = mutableListOf()
             } else {
-                currentStepTokens.add(token)
+                currentStepTokens.add(cleanToken)
             }
         }
         if (currentStepTokens.isNotEmpty()) {
@@ -8416,13 +8768,14 @@ Tebrikler! Bölüm 3'ü başarıyla tamamladın."""
         return null
     }
 
-    suspend fun markRoutineMentioned(routineId: Long, storyCalendarDateStr: String) {
-        val routines = routineDao.getRoutinesForBot("").toMutableList() // or query by id
-        // Find in all routines
-        val all = routineDao.getRoutinesForBot(routines.firstOrNull()?.botId ?: return)
-        val target = all.firstOrNull { it.id == routineId }
-        if (target != null) {
-            routineDao.updateRoutine(target.copy(lastMentionedStoryDate = storyCalendarDateStr))
+    suspend fun markRoutineMentioned(routineId: Long, storyCalendarDateStr: String, botId: String = "") {
+        val candidateBots = if (botId.isNotBlank()) listOf(botId) else botDao.getAllBotsList().map { it.id }
+        for (bId in candidateBots) {
+            val target = routineDao.getRoutinesForBot(bId).firstOrNull { it.id == routineId }
+            if (target != null) {
+                routineDao.updateRoutine(target.copy(lastMentionedStoryDate = storyCalendarDateStr))
+                return
+            }
         }
     }
 }

@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.content.Context
 import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 
 /**
@@ -84,6 +85,15 @@ object CastDetectorEngine {
             } catch (_: Exception) {
                 DEFAULT_FALLBACK_BLACKLIST
             }
+        }
+    }
+
+    fun addToBlacklist(context: Context? = null, name: String) {
+        val clean = extractCanonicalNameAndRole(name).first.ifBlank { name.trim() }.lowercase(Locale("tr", "TR"))
+        if (clean.isBlank()) return
+        synchronized(blacklistLock) {
+            val current = getBlacklist(context)
+            cachedBlacklist = current + clean + name.trim().lowercase(Locale("tr", "TR"))
         }
     }
 

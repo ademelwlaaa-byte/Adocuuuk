@@ -1,3 +1,4 @@
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 package com.example.ui.components
 
 import com.example.ui.theme.AppColors
@@ -13,9 +14,12 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 
 import android.content.Intent
@@ -89,7 +93,6 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.runtime.collectAsState
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
 import com.example.data.repository.EmochiRepository
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -114,7 +117,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
@@ -6489,8 +6491,8 @@ fun CharacterEmotionControlModal(
                                 )
                                 .border(
                                     if (isSelected) 1.dp else 0.8.dp,
-                                    if (isSelected) Color.Transparent
-                                    else androidx.compose.ui.graphics.Brush.linearGradient(
+                                    if (isSelected) Brush.linearGradient(listOf(Color.Transparent, Color.Transparent))
+                                    else Brush.linearGradient(
                                         listOf(Color(0x40A855F7), Color(0x20BE185D))
                                     ),
                                     RoundedCornerShape(20.dp)

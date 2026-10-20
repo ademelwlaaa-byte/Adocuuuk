@@ -31,6 +31,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.AppColors
+import com.example.ui.theme.EmochiTextSecondary
 
 /**
  * Unified premium text field for Emochi.
@@ -92,7 +93,7 @@ fun EmochiTextField(
         if (label != null) {
             Text(
                 text = label,
-                color = if (isFocused) Color(0xFFCDA8FF) else AppColors.EmochiTextSecondary,
+                color = if (isFocused) Color(0xFFCDA8FF) else EmochiTextSecondary,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(bottom = 4.dp)
@@ -141,7 +142,7 @@ fun EmochiTextField(
                     unfocusedTextColor = Color.White,
                     cursorColor = Color(0xFFBE185D),
                     focusedLabelColor = Color(0xFFCDA8FF),
-                    unfocusedLabelColor = AppColors.EmochiTextSecondary,
+                    unfocusedLabelColor = EmochiTextSecondary,
                     errorTextColor = Color(0xFFFF6B6B)
                 )
             )

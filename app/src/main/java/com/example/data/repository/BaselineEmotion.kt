@@ -355,7 +355,7 @@ Kullanıcı tanımı: $safeUserDesc
 
         // Word-boundary Turkish suffix-tolerant matching
         fun w(vararg words: String) = words.any { w ->
-            Regex("(?<![\\p{L}])${Regex.escape(w)}(ım|im|um|üm|ın|in|un|ün|ı|i|u|ü|ım|im|a|e|ya|ye|da|de|ta|te|dan|den|tan|ten|la|le|yla|yle|lar|ler|nın|nin|nun|nün|sı|si|su|sü|na|ne|nda|nde|ndan|nden|yla|yle)?(?![\\p{L}])".toRegex()).containsMatchIn(text)
+            Regex("(?<![\\p{L}])${Regex.escape(w)}(ım|im|um|üm|ın|in|un|ün|ı|i|u|ü|ım|im|a|e|ya|ye|da|de|ta|te|dan|den|tan|ten|la|le|yla|yle|lar|ler|nın|nin|nun|nün|sı|si|su|sü|na|ne|nda|nde|ndan|nden|yla|yle)?(?![\\p{L}])", RegexOption.IGNORE_CASE).containsMatchIn(text)
         }
 
         // Multi-word patterns checked first

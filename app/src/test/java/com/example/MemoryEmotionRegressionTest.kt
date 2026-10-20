@@ -1281,172 +1281,699 @@ class MemoryEmotionRegressionTest {
     }
 
     // =========================================================================
-    // SECTION 11 (BÖLÜM 2): MEMORY / RAG TESTS
+    // SECTION 11 (BÖLÜM 2): MEMORY / RAG: MUTLAK KUSURSUZLUK TESTS
     // =========================================================================
 
     @Test
-    fun testHybridScoringWeights_default() {
-        val weights = EmochiRepository.MemoryRankingWeights.forQuery("ne zaman buluştuk")
-        // No proper noun, no date → default weights
-        assertEquals(0.45f, weights.semanticWeight, 0.001f)
-        assertEquals(0.25f, weights.keywordWeight, 0.001f)
-        assertEquals(0.20f, weights.importanceWeight, 0.001f)
-        assertEquals(0.10f, weights.recencyWeight, 0.001f)
-        // Weights must sum to 1.0
-        val sum = weights.semanticWeight + weights.keywordWeight + weights.importanceWeight + weights.recencyWeight
-        assertEquals("Weights must sum to 1.0", 1.0f, sum, 0.001f)
-    }
+    fun testBolum2_1_KnowledgeGraph_3StepChain_ConflictResolution_PartialChain() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_kg_2_1"
 
-    @Test
-    fun testHybridScoringWeights_properNounBoost() {
-        val weights = EmochiRepository.MemoryRankingWeights.forQuery("Ahmet nerede çalışıyor")
-        // Proper noun → keywordWeight boosted to 0.40
-        assertEquals("Proper noun query should boost keywordWeight", 0.40f, weights.keywordWeight, 0.001f)
-        assertEquals("Semantic weight reduced with proper noun", 0.30f, weights.semanticWeight, 0.001f)
-    }
+        // 1) 3+ adımlı zincirleme soru: "X'in Y'sinin Z'sinin W'si kim?"
+        // Ahmet -> [kardeşi] -> Mehmet -> [ortağı] -> Can -> [avukatı] -> Selin
+        repo.extractAndSaveEntityRelations(botId, "Ahmet'in kardeşi Mehmet'tir.", currentMessageIndex = 1)
+        repo.extractAndSaveEntityRelations(botId, "Mehmet'in ortağı Can'dır.", currentMessageIndex = 2)
+        repo.extractAndSaveEntityRelations(botId, "Can'ın avukatı Selin'dir.", currentMessageIndex = 3)
 
-    @Test
-    fun testHybridScoringWeights_dateBoost() {
-        val weights = EmochiRepository.MemoryRankingWeights.forQuery("ocak ayında ne oldu")
-        assertEquals("Date query should boost keywordWeight", 0.40f, weights.keywordWeight, 0.001f)
-    }
+        val chainResult = repo.detectAndResolveGraphQuery(botId, "Ahmet'in kardeşinin ortağının avukatı kim?")
+        assertNotNull("3-step chain query must resolve", chainResult)
+        assertTrue("3-step chain must be complete", chainResult!!.isComplete)
+        assertEquals("Final target of 3-step chain must be Selin", "Selin", chainResult.finalTargetName)
+        assertEquals("Path must contain 3 steps", 3, chainResult.pathDescriptions.size)
+        assertEquals("Visited nodes must be 4 (Ahmet, Mehmet, Can, Selin)", listOf("Ahmet", "Mehmet", "Can", "Selin"), chainResult.visitedNodes)
 
-    @Test
-    fun testImplicitCorrection_firstRejectionMarksDisputed() {
-        // After first rejection trigger, a 'certain' fact should become 'disputed'
-        val fact = com.example.data.local.MemoryFactEntity(
-            id = 1L,
-            botId = "bot1",
-            subject = "kullanıcı",
-            key = "meslek",
-            value = "doktor",
-            confidence = "certain",
-            userCorrected = false,
-            lastConfirmedAt = 0L
+        // 2) Çelişkili ilişki kayıtları: aynı iki varlık arasında veya aynı ilişki tipinde
+        // en yüksek confidence ve en güncel kaydın öncelikli kullanıldığını doğrula
+        db.entityRelationDao().insertRelation(
+            EntityRelationEntity(
+                botId = botId,
+                sourceEntityName = "Kerem",
+                relationType = "düşmanı",
+                targetEntityName = "Barış",
+                confidence = "rumor",
+                createdAtMessageIndex = 5
+            )
         )
-        // Simulate the transition
-        val updated = fact.copy(confidence = "disputed", userCorrected = true)
-        assertEquals("First rejection should mark as disputed", "disputed", updated.confidence)
-        assertTrue("userCorrected should be true after first rejection", updated.userCorrected)
-    }
-
-    @Test
-    fun testImplicitCorrection_secondRejectionShouldArchive() {
-        // A fact already 'disputed' + userCorrected=true should be archived on second correction
-        val disputedFact = com.example.data.local.MemoryFactEntity(
-            id = 2L,
-            botId = "bot1",
-            subject = "kullanıcı",
-            key = "şehir",
-            value = "Ankara",
-            confidence = "disputed",
-            userCorrected = true,
-            lastConfirmedAt = 0L
+        db.entityRelationDao().insertRelation(
+            EntityRelationEntity(
+                botId = botId,
+                sourceEntityName = "Kerem",
+                relationType = "dostu",
+                targetEntityName = "Barış",
+                confidence = "certain",
+                createdAtMessageIndex = 2
+            )
         )
-        // Archive logic condition: confidence == "disputed" && userCorrected == true
-        val shouldArchive = disputedFact.confidence == "disputed" && disputedFact.userCorrected
-        assertTrue("Second rejection of disputed+userCorrected fact should trigger archiving", shouldArchive)
+        // Also test same relationType with different confidence/recency:
+        db.entityRelationDao().insertRelation(
+            EntityRelationEntity(
+                botId = botId,
+                sourceEntityName = "Kerem",
+                relationType = "patronu",
+                targetEntityName = "EskiPatron",
+                confidence = "inferred",
+                createdAtMessageIndex = 4
+            )
+        )
+        db.entityRelationDao().insertRelation(
+            EntityRelationEntity(
+                botId = botId,
+                sourceEntityName = "Kerem",
+                relationType = "patronu",
+                targetEntityName = "YeniPatron",
+                confidence = "certain",
+                createdAtMessageIndex = 10
+            )
+        )
+
+        val conflictRes = repo.traverseRelationGraph(botId, "Kerem", listOf("patronu"))
+        assertNotNull(conflictRes)
+        assertEquals("Higher confidence & newer relation must win", "YeniPatron", conflictRes!!.finalTargetName)
+
+        // Also verify extractAndSaveEntityRelations conflict replacement (newer/higher confidence replaces older)
+        repo.extractAndSaveEntityRelations(botId, "Ahmet'in kardeşi Burak'tır.", currentMessageIndex = 20, defaultConfidence = "certain")
+        val updatedStep1 = repo.traverseRelationGraph(botId, "Ahmet", listOf("kardeşi"))
+        assertEquals("Newer certain relation should update target to Burak", "Burak", updatedStep1?.finalTargetName)
+
+        // 3) Kırık / eksik zincirde kısmi-sonuç mekanizması:
+        // Burak -> [ortağı] -> Demir var ama Demir'in doktoru yok!
+        repo.extractAndSaveEntityRelations(botId, "Burak'ın ortağı Demir'dir.", currentMessageIndex = 21)
+        val brokenChain = repo.detectAndResolveGraphQuery(botId, "Ahmet'in kardeşinin ortağının doktoru kim?")
+        assertNotNull("Broken chain with valid prefix must return partial result instead of null", brokenChain)
+        assertFalse("Broken chain must have isComplete = false", brokenChain!!.isComplete)
+        assertEquals("Partial chain must stop at last known entity 'Demir'", "Demir", brokenChain.finalTargetName)
+        assertEquals("Partial chain must record 2 completed steps", 2, brokenChain.pathDescriptions.size)
+        assertEquals("Missing step must be identified", "doktoru", brokenChain.missingRelationStep)
+        assertTrue(
+            "Prompt explanation must state partial chain up to Demir and unknown beyond",
+            brokenChain.promptExplanation.contains("Zincirin bir kısmını buldum") &&
+                brokenChain.promptExplanation.contains("Demir") &&
+                brokenChain.promptExplanation.contains("bilmiyorum")
+        )
+
+        db.close()
     }
 
     @Test
-    fun testEntityRelationConflict_newerWins() {
-        // When two relations have same source+target but different types, the one with higher messageIndex wins
-        data class MockRelation(val relationType: String, val messageIndex: Int)
-        val existing = MockRelation("kardeşi", 5)
-        val incoming = MockRelation("patronu", 15)
-        val shouldReplace = incoming.messageIndex > existing.messageIndex
-        assertTrue("Newer relation should replace older conflicting one", shouldReplace)
+    fun testBolum2_2_HybridSearch_ConfigurableFormula_AndAutomaticProperNounDateBoost() = runBlocking {
+        // 1) Skorlama formülünün (0.45 + 0.25 + 0.20 + 0.10) config'den ayarlanabilir olduğunu doğrula
+        EmochiRepository.MemoryRankingWeights.activeConfig = EmochiRepository.MemoryRankingWeights()
+        val defaultWeights = EmochiRepository.MemoryRankingWeights.forQuery("ne zaman buluştuk")
+        assertEquals(0.45f, defaultWeights.semanticWeight, 0.001f)
+        assertEquals(0.25f, defaultWeights.keywordWeight, 0.001f)
+        assertEquals(0.20f, defaultWeights.importanceWeight, 0.001f)
+        assertEquals(0.10f, defaultWeights.recencyWeight, 0.001f)
+
+        // Özel isim veya tarih içeren sorgularda keywordScore ağırlığının OTOMATİK 0.25'ten 0.40'a çıktığını doğrula
+        val properNounWeights = EmochiRepository.MemoryRankingWeights.forQuery("Ahmet nerede çalışıyor")
+        assertEquals("Proper noun query must auto-boost keywordWeight to 0.40", 0.40f, properNounWeights.keywordWeight, 0.001f)
+        assertEquals("Proper noun query must adjust semanticWeight to 0.30", 0.30f, properNounWeights.semanticWeight, 0.001f)
+
+        val dateWeights = EmochiRepository.MemoryRankingWeights.forQuery("15 Ocak tarihinde ne oldu")
+        assertEquals("Date query must auto-boost keywordWeight to 0.40", 0.40f, dateWeights.keywordWeight, 0.001f)
+
+        // Config üzerinden formül ağırlıklarının değiştirilebildiğini kanıtla
+        EmochiRepository.MemoryRankingWeights.activeConfig = EmochiRepository.MemoryRankingWeights(
+            semanticWeight = 0.50f,
+            keywordWeight = 0.20f,
+            importanceWeight = 0.15f,
+            recencyWeight = 0.15f,
+            properNounSemanticWeight = 0.25f,
+            properNounKeywordWeight = 0.45f
+        )
+        val customBase = EmochiRepository.MemoryRankingWeights.forQuery("nasılsın bugün")
+        assertEquals(0.50f, customBase.semanticWeight, 0.001f)
+        assertEquals(0.20f, customBase.keywordWeight, 0.001f)
+        val customBoosted = EmochiRepository.MemoryRankingWeights.forQuery("Zeynep ile ne konuştuk")
+        assertEquals(0.45f, customBoosted.keywordWeight, 0.001f)
+        assertEquals(0.25f, customBoosted.semanticWeight, 0.001f)
+
+        EmochiRepository.MemoryRankingWeights.activeConfig = EmochiRepository.MemoryRankingWeights()
     }
 
     @Test
-    fun testEntityRelationConflict_olderLoses() {
-        data class MockRelation(val relationType: String, val messageIndex: Int)
-        val existing = MockRelation("kardeşi", 20)
-        val incoming = MockRelation("düşmanı", 10)
-        val shouldReplace = incoming.messageIndex > existing.messageIndex
-        assertFalse("Older incoming relation should not replace newer existing one", shouldReplace)
+    fun testBolum2_3_ImplicitLearning_EndToEnd_DisputedThenArchived_ExcludedFromActiveRetrieval() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_implicit_2_3"
+
+        val vec = repo.computeEmbedding("kullanıcı meslek doktor hastanede çalışıyor")
+        val factId = db.memoryFactDao().insertFact(
+            com.example.data.local.MemoryFactEntity(
+                botId = botId,
+                subject = "kullanıcı",
+                key = "meslek",
+                value = "doktor olarak hastanede çalışıyor",
+                confidence = "certain",
+                userCorrected = false,
+                lastConfirmedAt = System.currentTimeMillis(),
+                embeddingJson = repo.floatArrayToJson(vec)
+            )
+        )
+
+        // 1. Düzeltme ("Hayır öyle değildi, doktor değilim") -> confidence 'disputed' olmalı
+        repo.extractAndSaveRealtimeMemories(
+            botId = botId,
+            userQuery = "Hayır öyle değildi, ben doktor olarak hastanede çalışmıyorum!",
+            aiReplyText = "Özür dilerim, yanlış hatırlamışım."
+        )
+
+        val factAfter1st = db.memoryFactDao().getFactById(factId)
+        assertNotNull("Fact must remain in active table after 1st rejection", factAfter1st)
+        assertEquals("1st user rejection must lower fact confidence to 'disputed'", "disputed", factAfter1st!!.confidence)
+        assertTrue("userCorrected flag must be true after 1st rejection", factAfter1st.userCorrected)
+
+        // 2. Düzeltme (ikinci reddedilme) -> kayıt arşive taşınmalı (archived_memories tablosuna), aktif retrieval'den çıkmalı
+        repo.extractAndSaveRealtimeMemories(
+            botId = botId,
+            userQuery = "Yanlış hatırlıyorsun, öyle değildi, meslek doktor bilgisi tamamen yanlış!",
+            aiReplyText = "Tamam, bu bilgiyi tamamen düzelttim."
+        )
+
+        val archivedRecords = db.archivedMemoryDao().getArchivesForBot(botId)
+        assertTrue(
+            "2nd rejection must move disputed fact into archived_memories table without losing audit record",
+            archivedRecords.any { it.originalMemoryId == factId && it.archivedReason == "user_double_correction" }
+        )
+
+        // Aktif retrieval'e GİRMEDİĞİNİ kanıtla
+        val activeFacts = db.memoryFactDao().getActiveFacts(botId)
+        assertTrue("Archived fact must not appear in getActiveFacts", activeFacts.none { it.id == factId })
+
+        val ragRes = repo.getRelevantMemoryTwoStage(botId, "kullanıcı doktor hastanede çalışıyor meslek")
+        assertTrue("Archived fact must NOT enter active RAG retrieval", ragRes.retrievedFacts.none { it.id == factId })
+
+        db.close()
     }
 
     @Test
-    fun testNearDuplicateMerge_longerContentWins() {
-        val existingDesc = "Ahmet İstanbul'da yaşıyor."
-        val newContent = "Ahmet İstanbul'da yaşıyor ve Kadıköy'de bir ofisi var."
-        // Merge logic: take longer content
-        val merged = if (newContent.length > existingDesc.length) newContent else existingDesc
-        assertEquals("Longer content should win in merge", newContent, merged)
+    fun testBolum2_4_RoutineTracking_WeeklyTrigger_AndSilenceUntilNextWeek() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_routine_2_4"
+
+        val bot = com.example.data.local.BotEntity(
+            id = botId,
+            mode = "personal",
+            aiName = "Elif",
+            aiPersonality = "Her Cumartesi sabah sahilde koşuya çıkar ve keman dersi alır.",
+            scenario = "Şehir hayatı",
+            universeName = "",
+            keyCharactersJson = "[]",
+            userCharName = "Mert",
+            userCharDesc = "Komşu",
+            openingMessage = "Merhaba!",
+            writingStyle = "rp",
+            intensity = "normal",
+            storyCalendarDate = "2026-08-28", // Cuma
+            hasExplicitStoryDate = true,
+            storyDayCounter = 1L
+        )
+        repo.saveBot(bot)
+
+        val routines = db.routineDao().getRoutinesForBot(botId)
+        assertTrue("Weekly routine for Cumartesi must be extracted", routines.any { it.dayOfWeek.equals("Cumartesi", ignoreCase = true) })
+
+        // Cuma günü (2026-08-28) -> Cumartesi rutini tetiklenmemeli
+        val fridayReminder = repo.getActiveRoutineReminder(botId, "2026-08-28")
+        assertNull("Cumartesi routine must NOT trigger on Friday", fridayReminder)
+
+        // Takvimi 1 gün ilerlet -> 2026-08-29 Cumartesi
+        val (satDate, _, _) = com.example.data.repository.TimePerceptionEngine.advanceCalendarDateAndCheckAge(
+            currentCalendarDateStr = "2026-08-28",
+            currentDayCounter = 1L,
+            elapsedDaysToAdd = 1,
+            birthDateStr = "",
+            initialAge = 24
+        )
+        assertEquals("2026-08-29", satDate)
+        assertEquals("Cumartesi", repo.getDayOfWeekTurkish(satDate))
+
+        // Cumartesi günü ilk kontrol -> rutin hatırlatılmalı
+        val satReminder1 = repo.getActiveRoutineReminder(botId, satDate)
+        assertNotNull("Routine must trigger on Saturday (2026-08-29)", satReminder1)
+        assertTrue(satReminder1!!.routineDescription.contains("Cumartesi", ignoreCase = true))
+
+        // Hatırlatıldı olarak işaretle -> lastMentionedStoryDate güncellenmeli
+        repo.markRoutineMentioned(satReminder1.id, satDate, botId)
+        val updatedRoutine = db.routineDao().getRoutinesForBot(botId).first { it.id == satReminder1.id }
+        assertEquals("lastMentionedStoryDate must be updated to 2026-08-29", satDate, updatedRoutine.lastMentionedStoryDate)
+
+        // Aynı Cumartesi günü tekrar sorulduğunda sessiz kalmalı
+        val satReminder2 = repo.getActiveRoutineReminder(botId, satDate)
+        assertNull("Routine must stay silent for the rest of the same Saturday", satReminder2)
+
+        // Pazar..Cuma boyunca sessiz kalmalı, bir sonraki Cumartesi (2026-09-05) tekrar tetiklenmeli
+        assertNull("Routine must stay silent on Sunday", repo.getActiveRoutineReminder(botId, "2026-08-30"))
+        val nextSatReminder = repo.getActiveRoutineReminder(botId, "2026-09-05")
+        assertNotNull("Routine must trigger again on the next Saturday (2026-09-05)", nextSatReminder)
+
+        db.close()
     }
 
     @Test
-    fun testNearDuplicateMerge_importanceTakesMax() {
-        val existingImportance = 40
-        val newImportance = 70
-        val merged = maxOf(existingImportance, newImportance)
-        assertEquals("Max importance should be kept after merge", 70, merged)
+    fun testBolum2_5_CheckpointsEvery50Messages_AndTwoStageRetrievalDistribution() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_cp_2_5"
+
+        val bot = com.example.data.local.BotEntity(
+            id = botId,
+            mode = "personal",
+            aiName = "Lina",
+            aiPersonality = "Zeki",
+            scenario = "Araştırma",
+            universeName = "",
+            keyCharactersJson = "[]",
+            userCharName = "Kaan",
+            userCharDesc = "Ortak",
+            openingMessage = "Başlayalım.",
+            writingStyle = "rp",
+            intensity = "normal"
+        )
+        db.botDao().insertOrUpdate(bot)
+
+        // 200 mesaj ekle ve her mesajda checkAndGenerateCheckpoint çağır: sadece 50, 100, 150, 200'de tetiklenmeli (toplam 4 checkpoint)
+        val topics = listOf(
+            "Antik Mısır piramitleri ve firavun hazinesi araştırması",
+            "Kuzey ışıkları İzlanda astronomi gözlemevi yolculuğu",
+            "Derin okyanus denizaltı Mariana Çukuru keşfi",
+            "Mars kolonisi uzay istasyonu roket fırlatma görevi"
+        )
+        for (i in 1..200) {
+            val topicIdx = (i - 1) / 50
+            db.messageDao().insertMessage(
+                com.example.data.local.MessageEntity(
+                    id = "msg_cp_$i",
+                    botId = botId,
+                    role = if (i % 2 == 1) "user" else "assistant",
+                    text = "Mesaj #$i: ${topics[topicIdx]}",
+                    timestamp = 1000L * i
+                )
+            )
+            repo.checkAndGenerateCheckpoint(botId, i)
+        }
+
+        val allCps = db.memoryCheckpointDao().getCheckpointsForBot(botId)
+        assertEquals("Checkpoints must trigger strictly every 50 messages (4 checkpoints for 200 msgs)", 4, allCps.size)
+
+        // Sadece son 3 checkpoint TAM (CP#4, CP#3, CP#2), daha eski CP#1 SADECE embedding ile erişilebilir olmalı
+        val windowForMısır = repo.getCheckpointAccessWindow(
+            botId = botId,
+            queryText = "Antik Mısır piramitleri ve firavun hazinesi araştırması",
+            recentLimit = 3
+        )
+        assertEquals("Full recent checkpoints must be limited to last 3", 3, windowForMısır.fullRecentCheckpoints.size)
+        assertEquals(listOf(4, 3, 2), windowForMısır.fullRecentCheckpoints.map { it.checkpointNumber })
+        assertTrue(
+            "Older checkpoint CP#1 must be retrieved via embedding when query matches its topic",
+            windowForMısır.olderRetrievedByEmbedding.any { it.checkpointNumber == 1 }
+        )
+
+        // 100 mesajlık bir test sohbetinde retrievalStageUsed dağılımında ÇOĞUNLUĞUN (>50) vector_only aşamasında kaldığını kanıtla
+        val simReport = repo.runMemoryRagRetrievalSimulation(botId)
+        val vectorOnlyCount = Regex("""\[vector_only\].*?:\s*(\d+)\s*/\s*100""").find(simReport)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        assertTrue(
+            "Majority of 100 queries must stay in cheap vector_only stage (was $vectorOnlyCount)",
+            vectorOnlyCount > 50
+        )
+
+        db.close()
+    }
+
+    @Test
+    fun testBolum2_6_NearDuplicateMerge_AndActiveMemoryCustomProviderWithFallback() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_dup_2_6"
+
+        // 1) Near-duplicate (~0.92+ benzerlik) yeni bir fragmanın eski kaydın YERİNE değil ÜZERİNE (merge) yazıldığını kanıtla
+        val originalText = "Kullanıcı İstanbul Kadıköy Moda mahallesinde bir apartmanda yaşıyor"
+        val nearDupText = "Kullanıcı İstanbul Kadıköy Moda mahallesinde bir apartmanda yaşıyor."
+        val baseVec = repo.computeEmbedding(originalText)
+        val nearDupVec = repo.computeEmbedding(nearDupText)
+        val cosine = repo.cosineSimilarity(baseVec, nearDupVec)
+        assertTrue("Test vectors must have similarity >= 0.92 (actual=$cosine)", cosine >= 0.92f)
+
+        val originalEventId = db.memoryEventDao().insertEvent(
+            com.example.data.local.MemoryEventEntity(
+                botId = botId,
+                timestamp = 1000L,
+                description = originalText,
+                importanceScore = 60,
+                embedding = repo.floatArrayToJson(baseVec),
+                isBotSaved = true
+            )
+        )
+
+        repo.processSaveMemory(
+            botId = botId,
+            content = nearDupText,
+            category = "event",
+            importance = 9
+        )
+
+        val activeEvents = db.memoryEventDao().getActiveEvents(botId)
+        assertEquals("Total active events must remain 1 after near-duplicate merge", 1, activeEvents.size)
+        val mergedRecord = activeEvents.first()
+        assertEquals("Near-duplicate must merge ON TOP OF existing record ID", originalEventId, mergedRecord.id)
+        assertTrue("Merged description must preserve details", mergedRecord.description.contains("Moda mahallesinde"))
+        assertEquals("Merged importanceScore must upgrade to max (90)", 90, mergedRecord.importanceScore)
+
+        // 2) save_memory / update_memory / delete_memory function calling'in hem native tool call
+        // hem de desteklemeyen Custom Provider metin-fallback ([ACTIVE_MEMORY_CALL: ...]) ile tutarlı çalıştığını kanıtla
+        // A) Text-fallback save_memory
+        repo.executeActiveMemoryToolCalls(
+            botId = botId,
+            responseText = "Afiyet olsun! [ACTIVE_MEMORY_CALL: save_memory(content=\"Kullanıcının en sevdiği içecek filtre kahvedir\", category=\"fact\", importance=8)]",
+            toolCalls = emptyList()
+        )
+        val savedFactsAfterSave = db.memoryFactDao().getActiveFacts(botId)
+        assertTrue("Text-fallback save_memory must create fact", savedFactsAfterSave.any { it.value.contains("filtre kahve", ignoreCase = true) })
+
+        // B) Text-fallback update_memory
+        repo.executeActiveMemoryToolCalls(
+            botId = botId,
+            responseText = "Not ettim! [ACTIVE_MEMORY_CALL: update_memory(memoryId=\"filtre kahve\", newContent=\"Kullanıcının en sevdiği içecek cold brew kahvedir\")]",
+            toolCalls = emptyList()
+        )
+        val factsAfterUpdate = db.memoryFactDao().getActiveFacts(botId)
+        assertTrue("Text-fallback update_memory must update fact value to cold brew", factsAfterUpdate.any { it.value.contains("cold brew", ignoreCase = true) })
+
+        // C) Text-fallback delete_memory
+        repo.executeActiveMemoryToolCalls(
+            botId = botId,
+            responseText = "Tamam, sildim. [ACTIVE_MEMORY_CALL: delete_memory(memoryId=\"cold brew\", reason=\"Kullanıcı silinmesini istedi\")]",
+            toolCalls = emptyList()
+        )
+        val factsAfterDelete = db.memoryFactDao().getActiveFacts(botId)
+        assertFalse("Text-fallback delete_memory must remove the targeted fact", factsAfterDelete.any { it.value.contains("cold brew", ignoreCase = true) })
+
+        // D) Native tool call execution via executeActiveMemoryToolCalls
+        repo.executeActiveMemoryToolCalls(
+            botId = botId,
+            responseText = "",
+            toolCalls = listOf(
+                com.example.data.api.ParsedMemoryToolCall(
+                    name = "save_memory",
+                    arguments = mapOf(
+                        "content" to "Kullanıcı gitar çalmayı biliyor",
+                        "category" to "fact",
+                        "importance" to 8
+                    )
+                )
+            )
+        )
+        assertTrue(
+            "Native save_memory tool call must save fact",
+            db.memoryFactDao().getActiveFacts(botId).any { it.value.contains("gitar", ignoreCase = true) }
+        )
+
+        db.close()
     }
 
     // =========================================================================
-    // SECTION 12 (BÖLÜM 3): CHARACTER DETECTION TESTS
+    // SECTION 12 (BÖLÜM 3): OTOMATİK KARAKTER TESPİTİ: MUTLAK KUSURSUZLUK TESTS
     // =========================================================================
 
     @Test
-    fun testCastMemberEntity_isManuallyAdded_computed() {
-        val autoCast = CastMemberEntity(
-            botId = "bot1",
-            name = "Yardımcı",
-            description = "Oto eklendi",
-            isAutoAdded = true
-        )
-        assertFalse("isAutoAdded=true means NOT manually added", autoCast.isManuallyAdded)
+    fun testBolum3_1_EvaluateCharacterSignificance_UsesResolveUtilityModel_OnCustomProvider() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
 
-        val manualCast = CastMemberEntity(
-            botId = "bot1",
-            name = "Önemli",
-            description = "Kullanıcı ekledi",
-            isAutoAdded = false
+        val customProvider = CustomProviderEntity(
+            id = 77L,
+            label = "MyCustomOpenAI",
+            baseUrl = "https://custom.llm.local/v1",
+            apiKeyEncrypted = "sk-test-custom-key",
+            modelName = "llama-3.3-70b-instruct", // Ana pahalı model
+            apiFormat = "openai",
+            utilityModel = "llama-3.1-8b-instant", // Ucuz utility model
+            utilityModelSource = "auto_detected",
+            detectedSmallModels = "[\"llama-3.1-8b-instant\"]"
         )
-        assertTrue("isAutoAdded=false means manually added", manualCast.isManuallyAdded)
+        db.customProviderDao().insertProvider(customProvider)
+        db.userSettingsDao().insertOrUpdate(
+            UserSettingsEntity(id = 1, selectedProvider = "custom_77")
+        )
+
+        // Verify resolveUtilityModel picks the cheap utility model
+        val settings = repo.getOrCreateSettings()
+        val resolvedModel = EmochiRepository.resolveUtilityModel("custom_77", settings, customProvider)
+        assertEquals("resolveUtilityModel must pick cheap utilityModel for Custom Provider", "llama-3.1-8b-instant", resolvedModel)
+
+        // Intercept HTTP request inside evaluateCharacterSignificance to prove the actual network call sends "llama-3.1-8b-instant"
+        var capturedModelInHttpRequest: String? = null
+        val interceptor = Interceptor { chain ->
+            val req = chain.request()
+            val buffer = okio.Buffer()
+            req.body?.writeTo(buffer)
+            val bodyStr = buffer.readUtf8()
+            if (bodyStr.isNotBlank()) {
+                try {
+                    capturedModelInHttpRequest = JSONObject(bodyStr).optString("model")
+                } catch (_: Exception) {}
+            }
+            val fakeResponseJson = """
+                {
+                  "choices": [
+                    {
+                      "message": {
+                        "role": "assistant",
+                        "content": "{\"is_significant\": true, \"role\": \"Dedektif\", \"confidence\": 88, \"status\": \"authority\"}"
+                      }
+                    }
+                  ]
+                }
+            """.trimIndent()
+            Response.Builder()
+                .request(req)
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(fakeResponseJson.toResponseBody("application/json".toMediaType()))
+                .build()
+        }
+
+        RetrofitClient.customInterceptor = interceptor
+        try {
+            val (isSig, role, conf, mult) = repo.evaluateCharacterSignificance(
+                candidateName = "Komiser Yavuz",
+                sceneContext = "Komiser Yavuz dosyayı masaya bıraktı ve 'Bu davayı ben devralıyorum' dedi."
+            )
+            assertEquals("evaluateCharacterSignificance must send the cheap utilityModel to Custom Provider API", "llama-3.1-8b-instant", capturedModelInHttpRequest)
+            assertTrue(isSig)
+            assertEquals("Dedektif", role)
+            assertEquals(88, conf)
+            assertEquals(0.70, mult, 0.01)
+        } finally {
+            RetrofitClient.customInterceptor = null
+            db.close()
+        }
     }
 
     @Test
-    fun testCastMemberEntity_confirmPending_setsManual() {
-        // When user confirms a pending cast member, isAutoAdded should become false
-        val pending = CastMemberEntity(
-            botId = "bot1",
-            name = "TestChar",
-            description = "Test",
-            isAutoAdded = true,
-            pendingUserConfirmation = true,
-            importanceScore = 55
+    fun testBolum3_2_And_3_3_BorderlineConfidenceDialog_AndPermanentBlacklist() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_cast_3_2"
+
+        val bot = com.example.data.local.BotEntity(
+            id = botId,
+            mode = "personal",
+            aiName = "Aiden",
+            aiPersonality = "Sakin",
+            scenario = "Akademi",
+            universeName = "",
+            keyCharactersJson = "[]",
+            userCharName = "Deniz",
+            userCharDesc = "Öğrenci",
+            openingMessage = "Merhaba",
+            writingStyle = "rp",
+            intensity = "normal"
         )
-        // Simulate confirmPendingCastMember logic
-        val confirmed = pending.copy(
-            pendingUserConfirmation = false,
-            importanceScore = maxOf(pending.importanceScore, 75),
-            isAutoAdded = false
+        db.botDao().insertOrUpdate(bot)
+
+        // 3.2: Sınırda kalan (confidence 50-70) karakter tespiti -> pendingUserConfirmation = true olmalı
+        // ve getFirstPendingCastMember ile UI onay diyaloğuna sunulmalı
+        repo.detectAndRegisterCastMembers(
+            botId = botId,
+            aiReplyText = "\"Bence de öyle,\" dedi Tarık sessizce köşeden.",
+            userQuery = "Sınıfta kim var?"
         )
-        assertFalse("Confirmed character should not be auto-added", confirmed.isAutoAdded)
-        assertTrue("Confirmed character should be isManuallyAdded", confirmed.isManuallyAdded)
-        assertFalse("pendingUserConfirmation should be false", confirmed.pendingUserConfirmation)
+
+        val pending = repo.getFirstPendingCastMember(botId)
+        assertNotNull("Borderline character (confidence 50-70) must be queued for UI confirmation dialog", pending)
+        assertEquals("Tarık", pending!!.name)
+        assertTrue("Confidence must be in 50..70 borderline range (actual=${pending.detectionConfidence})", pending.detectionConfidence in 50..70)
+        assertTrue("pendingUserConfirmation must be true", pending.pendingUserConfirmation)
+
+        // 3.3: "Hayır, bir daha sorma" seçimi -> blacklistCastMember çağrılır, blacklistedNames'e eklenir ve kalıcı olarak hatırlanır
+        repo.blacklistCastMember(botId, pending.id)
+
+        assertNull("After blacklisting, getFirstPendingCastMember must return null", repo.getFirstPendingCastMember(botId))
+        val blacklistedSet = repo.getBlacklistedCharacterNames(botId)
+        assertTrue("blacklistedNames must contain 'tarık'", blacklistedSet.contains("tarık"))
+
+        // Aynı karakter tekrar sahnede geçse bile bir daha önerilmemeli veya aktif kadroya girmemeli
+        repo.detectAndRegisterCastMembers(
+            botId = botId,
+            aiReplyText = "\"Tekrar merhaba!\" dedi Tarık yüksek sesle. [CAST_MEMBER: Tarık | Sınıf Arkadaşı]",
+            userQuery = "Tarık ne dedi?"
+        )
+        val activeCast = db.castMemberDao().getCastMembersForBot(botId)
+        assertTrue("Blacklisted character must NEVER appear in active cast members again", activeCast.none { it.name.equals("Tarık", ignoreCase = true) })
+        assertNull("Blacklisted character must NEVER trigger pending confirmation dialog again", repo.getFirstPendingCastMember(botId))
+
+        db.close()
     }
 
     @Test
-    fun testDetectSmallModelCandidates_emptyList() {
-        val result = EmochiRepository.detectSmallModelCandidates(emptyList())
-        assertTrue("Empty model list should return empty candidates", result.isEmpty())
+    fun testBolum3_4_UnifiedCastDataModel_ManualAndAutoInSingleTableWithFlag() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_unified_3_4"
+
+        val manualCharsJson = repo.serializeKeyCharacters(
+            listOf(
+                com.example.data.repository.KeyCharacter(
+                    id = "manual_1",
+                    name = "Zeynep",
+                    desc = "Çocukluk arkadaşı ve sırdaş"
+                )
+            )
+        )
+        val bot = com.example.data.local.BotEntity(
+            id = botId,
+            mode = "personal",
+            aiName = "Aiden",
+            aiPersonality = "Cesur",
+            scenario = "Macera",
+            universeName = "",
+            keyCharactersJson = manualCharsJson,
+            userCharName = "Efe",
+            userCharDesc = "Kaptan",
+            openingMessage = "Selam",
+            writingStyle = "rp",
+            intensity = "normal"
+        )
+        // saveBot automatically mirrors manual KeyCharacters into CastMemberEntity with isManuallyAdded = true (isAutoAdded = false)
+        repo.saveBot(bot)
+
+        // Auto-detect another character
+        repo.ensureSideCharacterRegistered(
+            botId = botId,
+            charName = "Hakan",
+            role = "Gözcü",
+            cueSentence = "Hakan dürbünüyle ufku taradı.",
+            confidence = 85,
+            pendingConfirmation = false
+        )
+
+        val unifiedCast = repo.getUnifiedCastMembers(botId)
+        assertEquals("Both manual and auto-detected characters must reside in the single unified CastMemberEntity table", 2, unifiedCast.size)
+
+        val manualZeynep = unifiedCast.firstOrNull { it.name == "Zeynep" }
+        val autoHakan = unifiedCast.firstOrNull { it.name == "Hakan" }
+        assertNotNull(manualZeynep)
+        assertNotNull(autoHakan)
+        assertTrue("Manually added character must have isManuallyAdded == true", manualZeynep!!.isManuallyAdded)
+        assertFalse("Manually added character must have isAutoAdded == false", manualZeynep.isAutoAdded)
+        assertFalse("Auto-detected character must have isManuallyAdded == false", autoHakan!!.isManuallyAdded)
+        assertTrue("Auto-detected character must have isAutoAdded == true", autoHakan.isAutoAdded)
+
+        db.close()
     }
 
     @Test
-    fun testCustomProviderEntity_utilityModelFields() {
-        // Ensure new fields are properly initialised with defaults
-        val entity = CustomProviderEntity(
-            label = "TestProvider",
-            baseUrl = "https://example.com",
-            apiKeyEncrypted = "encrypted",
-            modelName = "test-model"
+    fun testBolum3_5_PeriodicAndStoryEventRoleReEvaluation_UpdatesMultiplier() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_reeval_3_5"
+
+        val memberId = db.castMemberDao().insertCastMember(
+            CastMemberEntity(
+                botId = botId,
+                name = "Kaan",
+                description = "Gizemli yabancı",
+                role = "Yabancı",
+                affectionScore = 82,
+                baseAffectionDifficultyMultiplier = 0.8,
+                lastRoleEvaluationIndex = 0
+            )
         )
-        assertEquals("Default utilityModel should be empty", "", entity.utilityModel)
-        assertEquals("Default utilityModelSource should be 'none'", "none", entity.utilityModelSource)
-        assertEquals("Default detectedSmallModels should be empty JSON array", "[]", entity.detectedSmallModels)
+
+        // 30. mesajda periyodik yeniden değerlendirme tetiklenir: affectionScore=82 olan "Yabancı" -> "Yakın Dost" olmalı ve çarpanı 0.8'den 1.3'e güncellenmeli
+        repo.reEvaluateCastMemberRolesIfNeeded(botId, currentMessageCount = 30, sceneContext = "Birlikte kahve içip sohbet ettiler.")
+        val after30 = db.castMemberDao().getCastMembersForBot(botId).first { it.id == memberId }
+        assertEquals("Role must upgrade from Yabancı to Yakın Dost at 30-message re-evaluation", "Yakın Dost", after30.role)
+        assertEquals("baseAffectionDifficultyMultiplier must update to 1.3 for Yakın Dost", 1.3, after30.baseAffectionDifficultyMultiplier, 0.01)
+        assertEquals("lastRoleEvaluationIndex must update to 30", 30, after30.lastRoleEvaluationIndex)
+
+        // Büyük bir hikaye olayı (ihanet) sonrasında 30 mesaj dolmasa bile rol yeniden değerlendirilmeli ve çarpan düşmeli (0.5)
+        db.castMemberDao().updateCastMember(after30.copy(affectionScore = 15))
+        repo.reEvaluateCastMemberRolesIfNeeded(botId, currentMessageCount = 35, sceneContext = "Kaan büyük bir ihanet planlayıp düşman safına geçti.")
+        val afterBetrayal = db.castMemberDao().getCastMembersForBot(botId).first { it.id == memberId }
+        assertEquals("Major story event (betrayal) must update role to Rakip / Düşman", "Rakip / Düşman", afterBetrayal.role)
+        assertEquals("baseAffectionDifficultyMultiplier must drop to 0.5 after betrayal", 0.5, afterBetrayal.baseAffectionDifficultyMultiplier, 0.01)
+
+        db.close()
+    }
+
+    @Test
+    fun testBolum3_6_DualRoleCharacter_ContextSensitiveMultiplierSelection() {
+        // Hem "Patron" (0.7) hem "Eski Sevgili" (1.4) olan bir karakter:
+        val dualRoleMember = CastMemberEntity(
+            botId = "bot_dual_3_6",
+            name = "Selim",
+            description = "Şirketin yöneticisi ve geçmişteki büyük aşkı",
+            role = "Patron",
+            secondaryRole = "Eski Sevgili",
+            baseAffectionDifficultyMultiplier = 0.7
+        )
+
+        // 1) İş bağlamı (toplantı, ofis, rapor) -> Patron çarpanı (0.7) seçilmeli
+        val workMultiplier = EmochiRepository.determineEffectiveRoleMultiplier(
+            member = dualRoleMember,
+            sceneContext = "Selim ofis masasında proje raporunu inceledi ve resmi toplantıyı başlattı."
+        )
+        assertEquals("In work context, Patron multiplier (0.7) must be selected", 0.7, workMultiplier, 0.01)
+
+        // 2) Özel / romantik bağlam (baş başa akşam, özlem, öpücük) -> Eski Sevgili çarpanı (1.4) seçilmeli
+        val personalMultiplier = EmochiRepository.determineEffectiveRoleMultiplier(
+            member = dualRoleMember,
+            sceneContext = "Gece baş başa kaldıklarında Selim geçmişteki anıları ve özlemini fısıldadı."
+        )
+        assertEquals("In personal context, Eski Sevgili multiplier (1.4) must be selected", 1.4, personalMultiplier, 0.01)
+
+        // 3) Ters sıra kontrolü: primary role = "Eski Sevgili" (1.4), secondary role = "Patron" (0.7) iken de aynı sonucu vermeli
+        val reversedDualMember = dualRoleMember.copy(
+            role = "Eski Sevgili",
+            secondaryRole = "Patron",
+            baseAffectionDifficultyMultiplier = 1.4
+        )
+        assertEquals(
+            "Reversed order in work context must still select 0.7",
+            0.7,
+            EmochiRepository.determineEffectiveRoleMultiplier(reversedDualMember, "Şirket toplantısında bütçe sunumu yapıldı."),
+            0.01
+        )
+        assertEquals(
+            "Reversed order in personal context must still select 1.4",
+            1.4,
+            EmochiRepository.determineEffectiveRoleMultiplier(reversedDualMember, "Baş başa romantik bir akşam yemeğinde sarıldılar."),
+            0.01
+        )
     }
 }
 

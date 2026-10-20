@@ -34,7 +34,7 @@ class BackgroundEmotionAuditWorker(
             val settings = db.userSettingsDao().getUserSettings() ?: return Result.success()
 
             // API anahtarı yoksa sessizce atla
-            val apiKey = settings.apiKey.ifBlank { return Result.success() }
+            val apiKey = settings.customApiKey.ifBlank { settings.groqApiKey }.ifBlank { return Result.success() }
 
             val recentHistory = db.emotionHistoryDao().getRecentHistoryForBot(botId, limit = 20)
             if (recentHistory.size < 5) return Result.success()

@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.platform.testTag
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -282,6 +285,12 @@ fun ChatScreen(
     var isStatsExpanded by remember { mutableStateOf(false) }
     var showSearchBar by remember { mutableStateOf(false) }
     var localSearchQuery by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+    val clipboardManager = LocalClipboardManager.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val viewModel: com.example.ui.viewmodel.EmochiViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+
     val searchResults by viewModel.searchResults.collectAsState()
     val starredMessages by viewModel.starredMessages.collectAsState()
     var showStarredSheet by remember { mutableStateOf(false) }
@@ -290,12 +299,6 @@ fun ChatScreen(
     var reactionPickerMessageId by remember { mutableStateOf<String?>(null) }
     val reactionEmojis = listOf("❤️", "😂", "😮", "😢", "👍", "🔥")
     val milestoneEvent = viewModel.milestoneEvent
-
-    val listState = rememberLazyListState()
-    val coroutineScope = rememberCoroutineScope()
-    val clipboardManager = LocalClipboardManager.current
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val viewModel: com.example.ui.viewmodel.EmochiViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 
     // Milestone event collector
     LaunchedEffect(Unit) {
@@ -1912,9 +1915,7 @@ fun ChatScreen(
                                         ) {
                                             Column {
                                                 Text(
-                                                    text = formatNarrativeText(displayText) + if (isThisStreaming) "▌".repeat(1).let { c ->
-                                                        if (cursorAlpha > 0.5f) "▌" else ""
-                                                    } else "",
+                                                    text = formatNarrativeText(displayText + if (isThisStreaming && cursorAlpha > 0.5f) "▌" else ""),
                                                     color = AppColors.TextWhite,
                                                     fontSize = 14.5.sp,
                                                     lineHeight = 22.sp
@@ -2533,11 +2534,12 @@ fun ChatScreen(
     // --- 3.2: Pending Cast Member Confirmation Dialog ---
     val pendingCastMember by viewModel.pendingCastMember.collectAsState()
     LaunchedEffect(bot.id, messages.size) {
-        if (messages.size % 5 == 0) viewModel.checkForPendingCastMembers(bot.id)
+        viewModel.checkForPendingCastMembers(bot.id)
     }
     pendingCastMember?.let { pending ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = {},   // force explicit choice
+            modifier = Modifier.testTag("pending_cast_dialog"),
             containerColor = AppColors.CardDarkViolet,
             title = {
                 Text(
@@ -2549,7 +2551,7 @@ fun ChatScreen(
             },
             text = {
                 Text(
-                    text = "\"${pending.name}\" önemli bir karakter olarak görünüyor. Kadroya eklensin mi?\n\n${pending.description.take(120).ifBlank { pending.role }}",
+                    text = "\"${pending.name}\" önemli görünüyor, kadroya eklensin mi?\n(Güven: %${pending.detectionConfidence} — Rol: ${pending.role})\n\n${pending.description.take(120).ifBlank { pending.role }}",
                     color = AppColors.TextLight,
                     fontSize = 14.sp,
                     lineHeight = 20.sp
@@ -2558,11 +2560,15 @@ fun ChatScreen(
             confirmButton = {
                 Button(
                     onClick = { viewModel.confirmPendingCastMember(bot.id, pending.id) },
-                    colors = ButtonDefaults.buttonColors(containerColor = AppColors.AccentViolet)
-                ) { Text("Evet, Ekle", color = Color.White, fontWeight = FontWeight.Bold) }
+                    modifier = Modifier.testTag("pending_cast_confirm_button"),
+                    colors = ButtonDefaults.buttonColors(containerColor = AppColors.PrimaryViolet)
+                ) { Text("Evet", color = Color.White, fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.blacklistAndDismissCastMember(bot.id, pending.id) }) {
+                TextButton(
+                    onClick = { viewModel.blacklistAndDismissCastMember(bot.id, pending.id) },
+                    modifier = Modifier.testTag("pending_cast_blacklist_button")
+                ) {
                     Text("Hayır, bir daha sorma", color = AppColors.TextLight)
                 }
             }
@@ -2898,8 +2904,6 @@ fun ChatScreen(
         )
     }
     } // End of else block for non-book mode
-    }
-    }
 }
 
 data class BookChoiceOption(val text: String, val rawLine: String)
@@ -4755,7 +4759,7 @@ fun BookReaderView(
                     itemsIndexed(messages, key = { _, msg -> msg.id }) { idx, msg ->
                         // Aşamalı fade-in
                         val visible = remember { androidx.compose.animation.core.MutableTransitionState(false).apply { targetState = true } }
-                        AnimatedVisibility(visibleState = visible,
+                        androidx.compose.animation.AnimatedVisibility(visibleState = visible,
                             enter = fadeIn(tween(350, delayMillis = minOf(idx * 40, 300))) +
                                     slideInVertically(tween(350, delayMillis = minOf(idx * 40, 300))) { it / 3 }
                         ) {
@@ -5167,6 +5171,7 @@ fun BookReaderView(
                 }
             }
         }
+    }
     }
 }
 
