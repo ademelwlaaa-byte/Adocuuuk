@@ -3,6 +3,10 @@ package com.example.ui.screens
 import com.example.ui.theme.AppColors
 import com.example.ui.theme.EmochiGradients
 import com.example.ui.theme.EmochiBackground
+import com.example.ui.theme.InterFontFamily
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.material.icons.filled.ChevronLeft
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Offset
@@ -4425,12 +4429,25 @@ fun BookReaderView(
     onClearError: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var fontSizeSp by remember { mutableStateOf(16.sp) }
+    var fontSizeSp by remember { mutableStateOf(15.5.sp) }
+    var isFullScreen by rememberSaveable { mutableStateOf(false) }
     var showSummaryModal by remember { mutableStateOf(false) }
     val listState = rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) {
         androidx.compose.foundation.lazy.LazyListState()
     }
     var lastProcessedMsgCount by rememberSaveable { mutableIntStateOf(0) }
+
+    // Exit fullscreen first when pressing system back button
+    androidx.activity.compose.BackHandler(enabled = isFullScreen) {
+        isFullScreen = false
+    }
+
+    // Automatically ensure opening message so Chapter 1 displays immediately
+    LaunchedEffect(messages.isEmpty(), isSending) {
+        if (messages.isEmpty() && !isSending) {
+            onEnsureOpeningMessage()
+        }
+    }
 
     // BookAudioController ile müzik yönetimi — race condition yok
     val isAmbientMusicPlaying by remember { derivedStateOf { com.example.util.BookAudioController.isPlaying } }
@@ -4467,7 +4484,6 @@ fun BookReaderView(
         (txt.contains("BÖLÜM") && txt.contains("SONU"))
     }
 
-    // Bölüm tamamlandığında müziği başlat — BookAudioController ile tekli player garantisi
     LaunchedEffect(isChapterCompleted) {
         if (isChapterCompleted && !com.example.util.BookAudioController.isPlaying) {
             com.example.util.BookAudioController.play(context, com.example.R.raw.bolumsonu, loop = true, volume = 0.85f)
@@ -4512,511 +4528,1045 @@ fun BookReaderView(
         )
     }
 
-    // Bölüm sonu sinematik overlay state
     var showChapterEndOverlay by remember { mutableStateOf(false) }
     LaunchedEffect(isChapterCompleted) {
         if (isChapterCompleted) showChapterEndOverlay = true
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-    Column(
+    val chapterNum = remember(messages) {
+        val txt = messages.lastOrNull { it.role == "assistant" || it.role == "model" }?.text ?: ""
+        when {
+            txt.contains("BÖLÜM 3") -> 3
+            txt.contains("BÖLÜM 2") -> 2
+            else -> 1
+        }
+    }
+
+    // Extract the opening hook sentence (e.g., "Gökyüzü yanlıştı.") from the first assistant message
+    val firstAssistantMsg = remember(messages) {
+        messages.firstOrNull { it.role == "assistant" || it.role == "model" }
+    }
+    val openingHookLine = remember(firstAssistantMsg?.text, bot.openingMessage) {
+        val src = firstAssistantMsg?.text?.ifBlank { bot.openingMessage } ?: bot.openingMessage
+        val paragraphs = src.split("\n\n").map { it.trim() }.filter { it.isNotBlank() }
+        val nonHeading = paragraphs.firstOrNull { p ->
+            !p.startsWith("#") && !(p.startsWith("📖") && p.contains("BÖLÜM"))
+        } ?: "Gökyüzü yanlıştı."
+        if (nonHeading.length <= 90) nonHeading.removePrefix("*").removeSuffix("*").trim()
+        else "Gökyüzü yanlıştı."
+    }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "bookNeonGlow")
+    val glowPulse by infiniteTransition.animateFloat(
+        initialValue = 0.72f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(2200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "glowPulse"
+    )
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(AppColors.Hex_0C0D17)
-            .statusBarsPadding()
-            .navigationBarsPadding()
+            .background(Color(0xFF05030C))
     ) {
-        // ── TOP BOOK NAVIGATION BAR — Premium Glassmorphic ──────────────
-        val chapterNum = remember(messages) {
-            val txt = messages.lastOrNull { it.role == "assistant" || it.role == "model" }?.text ?: ""
-            when {
-                txt.contains("BÖLÜM 3") -> 3
-                txt.contains("BÖLÜM 2") -> 2
-                else -> 1
-            }
-        }
-        val musicPulse = rememberInfiniteTransition(label = "musicPulse")
-        val musicGlow by musicPulse.animateFloat(0.4f, 1f,
-            infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "mg")
-
-        Box(
+        // 1. Top-Right Gothic Castle & Crescent Moon Background Strip (1:1 from reference)
+        androidx.compose.foundation.Image(
+            painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_book_bg_top_castle),
+            contentDescription = null,
+            contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Brush.linearGradient(listOf(Color(0xFF0A0818), Color(0xFF1A0D3A))))
-        ) {
-            // Subtle bottom separator
-            Box(modifier = Modifier.fillMaxWidth().height(1.dp).align(Alignment.BottomCenter)
-                .background(Brush.linearGradient(listOf(Color.Transparent, Color(0x60A78BFA), Color.Transparent))))
+                .statusBarsPadding()
+                .padding(top = 56.dp)
+                .align(Alignment.TopCenter)
+        )
 
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                // Left: back + title
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    val backScale = remember { androidx.compose.animation.core.Animatable(1f) }
-                    val backScope = rememberCoroutineScope()
-                    Box(
-                        modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp))
-                            .background(Brush.linearGradient(listOf(Color(0xFF1A1035), Color(0xFF0D0820))))
-                            .border(1.dp, Brush.linearGradient(listOf(Color(0xFF6D28D9), Color(0xFF4C1D95))), RoundedCornerShape(10.dp))
-                            .graphicsLayer { scaleX = backScale.value; scaleY = backScale.value }
-                            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
-                                backScope.launch {
-                                    backScale.animateTo(0.88f, tween(80))
-                                    backScale.animateTo(1f, tween(120))
-                                }
-                                onBack()
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                    }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    // Book icon container
-                    Box(
-                        modifier = Modifier.size(34.dp).clip(RoundedCornerShape(8.dp))
-                            .background(Brush.radialGradient(listOf(Color(0xFF7C3AED), Color(0xFF4C1D95)))),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("📖", fontSize = 16.sp)
-                    }
-
-                    Spacer(modifier = Modifier.width(10.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = bot.aiName.ifBlank { "Kozmik Sürükleniş" },
-                            color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("İnteraktif Roman", color = Color(0xFF9F7AEA), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                            Box(modifier = Modifier.size(3.dp).clip(CircleShape).background(Color(0xFF6D28D9)))
-                            Text("Bölüm $chapterNum / 3", color = Color(0xFFCDA8FF), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-
-                // Right: font size controls + music + reset
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    // Font size A- A+
-                    Row(
-                        modifier = Modifier.clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF1A1035))
-                            .border(1.dp, Color(0xFF2D1F50), RoundedCornerShape(8.dp))
-                    ) {
-                        Box(modifier = Modifier.clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
-                            fontSizeSp = if (fontSizeSp.value > 14f) (fontSizeSp.value - 2f).sp else 14.sp
-                        }.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                            Text("A⁻", color = Color(0xFF9F7AEA), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Box(modifier = Modifier.width(1.dp).height(20.dp).background(Color(0xFF2D1F50)).align(Alignment.CenterVertically))
-                        Box(modifier = Modifier.clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
-                            fontSizeSp = if (fontSizeSp.value < 22f) (fontSizeSp.value + 2f).sp else 22.sp
-                        }.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                            Text("A⁺", color = Color(0xFF9F7AEA), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    // Music toggle
-                    val musicScale = remember { androidx.compose.animation.core.Animatable(1f) }
-                    val musicScope = rememberCoroutineScope()
-                    Box(
-                        modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp))
-                            .background(if (isAmbientMusicPlaying) Color(0xFF2D0F40) else Color(0xFF1A1035))
-                            .border(1.dp,
-                                if (isAmbientMusicPlaying) Color(0xFFD946EF).copy(alpha = musicGlow) else Color(0xFF2D1F50),
-                                RoundedCornerShape(8.dp))
-                            .graphicsLayer { scaleX = musicScale.value; scaleY = musicScale.value }
-                            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
-                                musicScope.launch {
-                                    musicScale.animateTo(0.85f, tween(80))
-                                    musicScale.animateTo(1f, tween(120))
-                                }
-                                toggleAmbientMusic()
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(if (isAmbientMusicPlaying) "🎵" else "🔇", fontSize = 15.sp)
-                    }
-
-                    // Reset
-                    val resetScale = remember { androidx.compose.animation.core.Animatable(1f) }
-                    val resetScope = rememberCoroutineScope()
-                    Box(
-                        modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF1A0A0A))
-                            .border(1.dp, Color(0xFF7F1D1D).copy(alpha = 0.6f), RoundedCornerShape(8.dp))
-                            .graphicsLayer { scaleX = resetScale.value; scaleY = resetScale.value }
-                            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
-                                resetScope.launch {
-                                    resetScale.animateTo(0.85f, tween(80))
-                                    resetScale.animateTo(1f, tween(120))
-                                }
-                                onResetChat(true)
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null, tint = Color(0xFFF87171), modifier = Modifier.size(17.dp))
-                    }
-                }
-            }
-        }
-
-        // Error banner
-        errorMessage?.let { err ->
-            Row(
-                modifier = Modifier.fillMaxWidth()
-                    .background(Brush.linearGradient(listOf(Color(0xFF2D0A0A), Color(0xFF1A0808))))
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("⚠️ $err", color = Color(0xFFFCA5A5), fontSize = 12.sp, modifier = Modifier.weight(1f))
-                Box(modifier = Modifier.size(24.dp).clip(CircleShape)
-                    .background(Color(0xFF3D1010))
-                    .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { onClearError() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Default.Close, contentDescription = null, tint = Color(0xFFFCA5A5), modifier = Modifier.size(14.dp))
-                }
-            }
-        }
-
-        // ── NOVEL CANVAS BODY ────────────────────────────────────────────
-        val novelInfinite = rememberInfiniteTransition(label = "novelBg")
-        val novelDrift by novelInfinite.animateFloat(0f, 1f,
-            infiniteRepeatable(tween(18000, easing = LinearEasing)), label = "nd")
-
-        Box(
+        // 2. Bottom Cosmic Nebula, Shooting Light Ray, 4-Point Star & Glowing Planet Arc (1:1 from reference)
+        androidx.compose.foundation.Image(
+            painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_book_bg_bottom_nebula),
+            contentDescription = null,
+            contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
             modifier = Modifier
-                .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 6.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .border(1.dp, Brush.linearGradient(listOf(Color(0x40A78BFA), Color(0x206D28D9), Color(0x40A78BFA))), RoundedCornerShape(18.dp))
-        ) {
-            // Canlı nebula arka plan
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                drawRect(Color(0xFF0A0A18))
-                // 3 yavaş nebula blob
-                val blobs = listOf(
-                    Triple(0.2f, 0.3f, Color(0xFF1A0A2E)),
-                    Triple(0.7f, 0.6f, Color(0xFF0D1A2E)),
-                    Triple(0.5f, 0.85f, Color(0xFF1A0D2E))
-                )
-                blobs.forEachIndexed { i, (bx, by, col) ->
-                    val cx = size.width * (bx + kotlin.math.sin(novelDrift * 2 * Math.PI.toFloat() + i) * 0.05f)
-                    val cy = size.height * (by + kotlin.math.cos(novelDrift * 2 * Math.PI.toFloat() + i * 1.3f) * 0.04f)
-                    drawCircle(color = col.copy(alpha = 0.6f), radius = size.minDimension * 0.4f, center = Offset(cx, cy),
-                        blendMode = BlendMode.Screen)
-                }
-                // Üst ve alt vignette
-                drawRect(Brush.verticalGradient(listOf(Color(0xFF050510), Color.Transparent, Color.Transparent, Color(0xFF050510))))
-            }
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+        )
 
-            if (messages.isEmpty() && !isSending) {
-                // Empty state
-                Column(
-                    modifier = Modifier.fillMaxSize().padding(28.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Box(modifier = Modifier.size(72.dp).clip(RoundedCornerShape(20.dp))
-                        .background(Brush.radialGradient(listOf(Color(0xFF4C1D95), Color(0xFF1A0D3A)))),
-                        contentAlignment = Alignment.Center) {
-                        Text("📖", fontSize = 32.sp)
-                    }
-                    Spacer(modifier = Modifier.height(18.dp))
-                    Text("Kitap Sayfası Hazırlanıyor", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Bölüm 1 metnini başlatmak için dokunun.", color = Color(0xFF9F7AEA), fontSize = 13.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                    Spacer(modifier = Modifier.height(22.dp))
-                    val startScale = remember { androidx.compose.animation.core.Animatable(1f) }
-                    val startScope = rememberCoroutineScope()
-                    Box(modifier = Modifier.clip(RoundedCornerShape(14.dp))
-                        .background(Brush.linearGradient(listOf(Color(0xFF7C3AED), Color(0xFF4C1D95))))
-                        .graphicsLayer { scaleX = startScale.value; scaleY = startScale.value }
-                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
-                            startScope.launch { startScale.animateTo(0.93f, tween(80)); startScale.animateTo(1f, tween(120)) }
-                            onEnsureOpeningMessage()
-                        }.padding(horizontal = 24.dp, vertical = 12.dp)) {
-                        Text("📖 Bölüm 1'i Başlat", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
-                    }
-                }
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    itemsIndexed(messages, key = { _, msg -> msg.id }) { idx, msg ->
-                        // Aşamalı fade-in
-                        val visible = remember { androidx.compose.animation.core.MutableTransitionState(false).apply { targetState = true } }
-                        androidx.compose.animation.AnimatedVisibility(visibleState = visible,
-                            enter = fadeIn(tween(350, delayMillis = minOf(idx * 40, 300))) +
-                                    slideInVertically(tween(350, delayMillis = minOf(idx * 40, 300))) { it / 3 }
+        // Main Foreground Layout
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+        ) {
+            // ── TOP NAVIGATION BAR & HERO CHAPTER BANNER (Hidden when Fullscreen is active) ──
+            androidx.compose.animation.AnimatedVisibility(
+                visible = !isFullScreen,
+                enter = fadeIn(tween(240)) + expandVertically(tween(260, easing = FastOutSlowInEasing)),
+                exit = fadeOut(tween(200)) + shrinkVertically(tween(240, easing = FastOutSlowInEasing))
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    // Top Bar Row
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 2.dp)
+                    ) {
+                        // Left: Circular Back Button + Glowing Book Icon Box
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.align(Alignment.TopStart)
                         ) {
+                            val backScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                            val backScope = rememberCoroutineScope()
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .graphicsLayer { scaleX = backScale.value; scaleY = backScale.value }
+                                    .drawBehind {
+                                        drawCircle(
+                                            brush = Brush.radialGradient(
+                                                colors = listOf(
+                                                    Color(0xFF7C3AED).copy(alpha = 0.55f * glowPulse),
+                                                    Color(0xFF4F46E5).copy(alpha = 0.2f * glowPulse),
+                                                    Color.Transparent
+                                                ),
+                                                radius = size.minDimension * 0.82f
+                                            )
+                                        )
+                                    }
+                                    .clip(CircleShape)
+                                    .background(
+                                        Brush.radialGradient(
+                                            colors = listOf(Color(0xFF211042), Color(0xFF0C061C))
+                                        )
+                                    )
+                                    .border(
+                                        width = 1.3.dp,
+                                        brush = Brush.linearGradient(
+                                            colors = listOf(Color(0xFFA855F7), Color(0xFF6366F1), Color(0xFF9333EA))
+                                        ),
+                                        shape = CircleShape
+                                    )
+                                    .clickable(
+                                        indication = null,
+                                        interactionSource = remember { MutableInteractionSource() }
+                                    ) {
+                                        backScope.launch {
+                                            backScale.animateTo(0.88f, tween(80))
+                                            backScale.animateTo(1f, tween(120))
+                                        }
+                                        onBack()
+                                    }
+                                    .testTag("book_back_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ChevronLeft,
+                                    contentDescription = "Geri",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(11.dp))
+
+                            // Exact Glowing Open Book Icon Box from reference
+                            androidx.compose.foundation.Image(
+                                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_book_top_icon),
+                                contentDescription = null,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .drawBehind {
+                                        drawCircle(
+                                            brush = Brush.radialGradient(
+                                                colors = listOf(
+                                                    Color(0xFF8B5CF6).copy(alpha = 0.45f * glowPulse),
+                                                    Color.Transparent
+                                                ),
+                                                radius = size.minDimension * 0.85f
+                                            )
+                                        )
+                                    }
+                                    .clip(RoundedCornerShape(10.dp))
+                            )
+                        }
+
+                        // Center: "Kozmik Sürükleniş" + "BÖLÜM 1" + Glowing 4-Point Star Divider
+                        val bookTitleText = remember(bot.aiName) {
+                            val raw = bot.aiName.ifBlank { "Kozmik Sürükleniş" }
+                            if (raw.contains("Kozmik", ignoreCase = true)) "Kozmik Sürükleniş" else raw
+                        }
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 2.dp, start = 92.dp, end = 112.dp)
+                        ) {
+                            Text(
+                                text = bookTitleText,
+                                color = Color.White,
+                                fontSize = 15.5.sp,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = "BÖLÜM $chapterNum",
+                                color = Color(0xFFD8B4FE),
+                                fontSize = 10.sp,
+                                fontFamily = InterFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 2.6.sp,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            androidx.compose.foundation.Image(
+                                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_book_top_divider),
+                                contentDescription = null,
+                                contentScale = androidx.compose.ui.layout.ContentScale.FillBounds,
+                                modifier = Modifier
+                                    .width(138.dp)
+                                    .height(13.dp)
+                            )
+                        }
+
+                        // Right: [A- | A+] + [Mute] + [Refresh] (1:1 with reference)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 3.dp)
+                        ) {
+                            // [A- | A+] Pill
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .height(30.dp)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(Color(0xFF100824))
+                                    .border(
+                                        width = 1.dp,
+                                        brush = Brush.linearGradient(
+                                            listOf(Color(0xFF7C3AED), Color(0xFF6366F1))
+                                        ),
+                                        shape = RoundedCornerShape(9.dp)
+                                    )
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .clickable(
+                                            indication = null,
+                                            interactionSource = remember { MutableInteractionSource() }
+                                        ) {
+                                            fontSizeSp = if (fontSizeSp.value > 13f) (fontSizeSp.value - 1.5f).sp else 13.sp
+                                        }
+                                        .padding(horizontal = 7.dp)
+                                        .testTag("book_font_decrease_button"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "A⁻",
+                                        color = Color(0xFFE9D5FF),
+                                        fontSize = 11.sp,
+                                        fontFamily = InterFontFamily,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .width(1.dp)
+                                        .height(16.dp)
+                                        .background(Color(0x558B5CF6))
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .clickable(
+                                            indication = null,
+                                            interactionSource = remember { MutableInteractionSource() }
+                                        ) {
+                                            fontSizeSp = if (fontSizeSp.value < 22f) (fontSizeSp.value + 1.5f).sp else 22.sp
+                                        }
+                                        .padding(horizontal = 7.dp)
+                                        .testTag("book_font_increase_button"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "A⁺",
+                                        color = Color(0xFFE9D5FF),
+                                        fontSize = 11.sp,
+                                        fontFamily = InterFontFamily,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+
+                            // Mute / Ambient Music Toggle Button
+                            val musicScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                            val musicScope = rememberCoroutineScope()
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .graphicsLayer { scaleX = musicScale.value; scaleY = musicScale.value }
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(Color(0xFF100824))
+                                    .border(
+                                        width = 1.dp,
+                                        brush = Brush.linearGradient(
+                                            if (isAmbientMusicPlaying) {
+                                                listOf(Color(0xFFD946EF), Color(0xFF8B5CF6))
+                                            } else {
+                                                listOf(Color(0xFF7C3AED), Color(0xFF6366F1))
+                                            }
+                                        ),
+                                        shape = RoundedCornerShape(9.dp)
+                                    )
+                                    .clickable(
+                                        indication = null,
+                                        interactionSource = remember { MutableInteractionSource() }
+                                    ) {
+                                        musicScope.launch {
+                                            musicScale.animateTo(0.86f, tween(80))
+                                            musicScale.animateTo(1f, tween(120))
+                                        }
+                                        toggleAmbientMusic()
+                                    }
+                                    .testTag("book_music_toggle_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (!isAmbientMusicPlaying) {
+                                    androidx.compose.foundation.Image(
+                                        painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_book_mute_icon),
+                                        contentDescription = "Sesi Aç",
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                } else {
+                                    Text("🔊", fontSize = 13.sp)
+                                }
+                            }
+
+                            // Refresh / Reset Chapter Button
+                            val resetScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                            val resetScope = rememberCoroutineScope()
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .graphicsLayer { scaleX = resetScale.value; scaleY = resetScale.value }
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(Color(0xFF100824))
+                                    .border(
+                                        width = 1.dp,
+                                        brush = Brush.linearGradient(
+                                            listOf(Color(0xFF7C3AED), Color(0xFF6366F1))
+                                        ),
+                                        shape = RoundedCornerShape(9.dp)
+                                    )
+                                    .clickable(
+                                        indication = null,
+                                        interactionSource = remember { MutableInteractionSource() }
+                                    ) {
+                                        resetScope.launch {
+                                            resetScale.animateTo(0.86f, tween(80))
+                                            resetScale.animateTo(1f, tween(120))
+                                        }
+                                        onResetChat(true)
+                                    }
+                                    .testTag("book_reset_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Sıfırla",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // ── HERO CHAPTER BANNER CARD (1:1 with reference) ──
+                    val isKozmikBook = remember(bot.aiName, bot.id) {
+                        bot.aiName.contains("Kozmik", ignoreCase = true) ||
+                        bot.id == "preset_aiden_mcu_cosmic" ||
+                        bot.aiName.isBlank()
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp)
+                            .aspectRatio(775f / 308f)
+                            .drawBehind {
+                                drawRoundRect(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            Color(0xFF7C3AED).copy(alpha = 0.25f * glowPulse),
+                                            Color.Transparent
+                                        ),
+                                        radius = size.maxDimension * 0.65f
+                                    ),
+                                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(22.dp.toPx())
+                                )
+                            }
+                            .clip(RoundedCornerShape(22.dp))
+                    ) {
+                        if (isKozmikBook) {
+                            androidx.compose.foundation.Image(
+                                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_book_hero_banner_card),
+                                contentDescription = "Kozmik Sürükleniş Bölüm $chapterNum",
+                                contentScale = androidx.compose.ui.layout.ContentScale.FillBounds,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            // Dynamic chapter pill override if user is on Chapter 2 or 3
+                            if (chapterNum > 1) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(start = 74.dp, top = 16.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF1A103C))
+                                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "Bölüm $chapterNum",
+                                        color = Color(0xFFC4B5FD),
+                                        fontSize = 11.5.sp,
+                                        fontFamily = InterFontFamily,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        } else {
+                            androidx.compose.foundation.Image(
+                                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_book_hero_banner_generic),
+                                contentDescription = bot.aiName,
+                                contentScale = androidx.compose.ui.layout.ContentScale.FillBounds,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            Column(
+                                modifier = Modifier
+                                    .align(Alignment.CenterStart)
+                                    .padding(start = 76.dp, end = 140.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF1A103C))
+                                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "Bölüm $chapterNum",
+                                        color = Color(0xFFC4B5FD),
+                                        fontSize = 11.sp,
+                                        fontFamily = InterFontFamily,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = bot.aiName.uppercase(),
+                                    color = Color(0xFFEDE9FE),
+                                    fontSize = 19.sp,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
+                                    fontWeight = FontWeight.Bold,
+                                    lineHeight = 22.sp,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "ROMAN  •  İNTERAKTİF  •  FANTASTİK",
+                                    color = Color(0xFFC4B5FD),
+                                    fontSize = 8.5.sp,
+                                    fontFamily = InterFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    letterSpacing = 1.8.sp
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(11.dp))
+                }
+            }
+
+            // Error banner if present
+            errorMessage?.let { err ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Brush.linearGradient(listOf(Color(0xFF2D0A0A), Color(0xFF1A0808))))
+                        .border(1.dp, Color(0xFF7F1D1D), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("⚠️ $err", color = Color(0xFFFCA5A5), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF3D1010))
+                            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { onClearError() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null, tint = Color(0xFFFCA5A5), modifier = Modifier.size(14.dp))
+                    }
+                }
+            }
+
+            // ── STORY READING CARD (1:1 Botanical Neon Frame + Single Extra Fullscreen Button) ──
+            val bottomSpaceDp by androidx.compose.animation.core.animateDpAsState(
+                targetValue = if (isFullScreen) 8.dp else 112.dp,
+                animationSpec = tween(260, easing = FastOutSlowInEasing),
+                label = "bottomSpaceDp"
+            )
+            val topSpaceDp by androidx.compose.animation.core.animateDpAsState(
+                targetValue = if (isFullScreen) 8.dp else 0.dp,
+                animationSpec = tween(260, easing = FastOutSlowInEasing),
+                label = "topSpaceDp"
+            )
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(
+                        start = 14.dp,
+                        end = 14.dp,
+                        top = topSpaceDp,
+                        bottom = bottomSpaceDp
+                    )
+                    .clip(RoundedCornerShape(24.dp))
+            ) {
+                // Botanical purple leaves + glowing neon border frame (1:1 from reference)
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_book_story_card_bg),
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.FillBounds,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = 13.dp, bottom = 30.dp)
+                ) {
+                    // Header Row inside Story Reading Card:
+                    // Left: [✦] Star Badge + Italic Hook ("Gökyüzü yanlıştı.")
+                    // Right: Single Extra Fullscreen Button ("sadece bir tane tam ekran butonu olsun ekstra olarak")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 13.dp, end = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_book_star_badge),
+                            contentDescription = null,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                            modifier = Modifier.size(30.dp)
+                        )
+
+                        Spacer(modifier = Modifier.width(11.dp))
+
+                        Text(
+                            text = openingHookLine,
+                            color = Color(0xFFC8B6FF),
+                            fontSize = (fontSizeSp.value + 0.5f).sp,
+                            fontFamily = InterFontFamily,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // THE SINGLE EXTRA FULLSCREEN BUTTON
+                        val fsScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                        val fsScope = rememberCoroutineScope()
+                        Box(
+                            modifier = Modifier
+                                .size(31.dp)
+                                .graphicsLayer { scaleX = fsScale.value; scaleY = fsScale.value }
+                                .drawBehind {
+                                    drawCircle(
+                                        brush = Brush.radialGradient(
+                                            colors = listOf(
+                                                Color(0xFF8B5CF6).copy(alpha = 0.42f * glowPulse),
+                                                Color.Transparent
+                                            ),
+                                            radius = size.minDimension * 0.85f
+                                        )
+                                    )
+                                }
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFF190C36), Color(0xFF0D0620))
+                                    )
+                                )
+                                .border(
+                                    width = 1.1.dp,
+                                    brush = Brush.linearGradient(
+                                        listOf(Color(0xFFA855F7), Color(0xFF6366F1), Color(0xFF8B5CF6))
+                                    ),
+                                    shape = RoundedCornerShape(9.dp)
+                                )
+                                .clickable(
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() }
+                                ) {
+                                    fsScope.launch {
+                                        fsScale.animateTo(0.86f, tween(80))
+                                        fsScale.animateTo(1f, tween(120))
+                                    }
+                                    isFullScreen = !isFullScreen
+                                }
+                                .testTag("book_fullscreen_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // Crisp custom Fullscreen / FullscreenExit corner brackets icon
+                            Canvas(modifier = Modifier.size(15.dp)) {
+                                val stroke = 1.7.dp.toPx()
+                                val len = size.width * 0.32f
+                                val w = size.width
+                                val h = size.height
+                                val col = Color(0xFFF3E8FF)
+                                val cap = androidx.compose.ui.graphics.StrokeCap.Round
+
+                                if (!isFullScreen) {
+                                    // Outward corners (Expand to Fullscreen)
+                                    // Top-Left
+                                    drawLine(col, Offset(0f, len), Offset(0f, 0f), stroke, cap)
+                                    drawLine(col, Offset(0f, 0f), Offset(len, 0f), stroke, cap)
+                                    // Top-Right
+                                    drawLine(col, Offset(w - len, 0f), Offset(w, 0f), stroke, cap)
+                                    drawLine(col, Offset(w, 0f), Offset(w, len), stroke, cap)
+                                    // Bottom-Left
+                                    drawLine(col, Offset(0f, h - len), Offset(0f, h), stroke, cap)
+                                    drawLine(col, Offset(0f, h), Offset(len, h), stroke, cap)
+                                    // Bottom-Right
+                                    drawLine(col, Offset(w - len, h), Offset(w, h), stroke, cap)
+                                    drawLine(col, Offset(w, h - len), Offset(w, h), stroke, cap)
+                                } else {
+                                    // Inward corners (Exit Fullscreen)
+                                    // Top-Left
+                                    drawLine(col, Offset(0f, len), Offset(len, len), stroke, cap)
+                                    drawLine(col, Offset(len, 0f), Offset(len, len), stroke, cap)
+                                    // Top-Right
+                                    drawLine(col, Offset(w - len, 0f), Offset(w - len, len), stroke, cap)
+                                    drawLine(col, Offset(w, len), Offset(w - len, len), stroke, cap)
+                                    // Bottom-Left
+                                    drawLine(col, Offset(0f, h - len), Offset(len, h - len), stroke, cap)
+                                    drawLine(col, Offset(len, h), Offset(len, h - len), stroke, cap)
+                                    // Bottom-Right
+                                    drawLine(col, Offset(w - len, h), Offset(w - len, h - len), stroke, cap)
+                                    drawLine(col, Offset(w, h - len), Offset(w - len, h - len), stroke, cap)
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Story Text Body
+                    val displayMessages = remember(messages, bot.openingMessage) {
+                        if (messages.isNotEmpty()) messages
+                        else if (bot.openingMessage.isNotBlank()) {
+                            listOf(
+                                com.example.data.local.MessageEntity(
+                                    id = "opening_preview",
+                                    botId = bot.id,
+                                    role = "assistant",
+                                    text = bot.openingMessage,
+                                    timestamp = 0L
+                                )
+                            )
+                        } else emptyList()
+                    }
+
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(start = 54.dp, end = 42.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp)
+                    ) {
+                        itemsIndexed(displayMessages, key = { idx, msg -> "${msg.id}_$idx" }) { idx, msg ->
                             if (msg.role == "user") {
-                                // ── Kullanıcı seçim kartı ──
-                                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
-                                    Box(modifier = Modifier.fillMaxWidth(0.95f).clip(RoundedCornerShape(14.dp))
-                                        .background(Brush.linearGradient(listOf(Color(0xFF1A1218), Color(0xFF120D1A))))
-                                        .border(1.dp, Brush.linearGradient(listOf(Color(0xFFF59E0B), Color(0xFFD97706))), RoundedCornerShape(14.dp))
-                                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                                // User Choice Card
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(Brush.linearGradient(listOf(Color(0xFF1A1032), Color(0xFF110A22))))
+                                            .border(
+                                                1.dp,
+                                                Brush.linearGradient(listOf(Color(0xFFA855F7), Color(0xFF6366F1))),
+                                                RoundedCornerShape(14.dp)
+                                            )
+                                            .padding(horizontal = 14.dp, vertical = 11.dp)
                                     ) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Box(modifier = Modifier.size(30.dp).clip(CircleShape)
-                                                .background(Brush.radialGradient(listOf(Color(0xFFF59E0B), Color(0xFF92400E)))),
-                                                contentAlignment = Alignment.Center) {
-                                                Text("✦", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(26.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Brush.radialGradient(listOf(Color(0xFF9333EA), Color(0xFF4C1D95)))),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text("✦", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                             }
                                             Spacer(modifier = Modifier.width(10.dp))
                                             Column {
-                                                Text("VERİLEN KARAR", color = Color(0xFFF59E0B), fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+                                                Text(
+                                                    text = "VERİLEN KARAR",
+                                                    color = Color(0xFFC4B5FD),
+                                                    fontSize = 9.5.sp,
+                                                    fontFamily = InterFontFamily,
+                                                    fontWeight = FontWeight.Bold,
+                                                    letterSpacing = 0.8.sp
+                                                )
                                                 Text(
                                                     text = msg.text.replace(Regex("^(1️⃣|2️⃣|3️⃣|4️⃣|\\d+[\\.\\)]|[-•*])\\s*"), ""),
-                                                    color = Color(0xFFFDE68A), fontSize = (fontSizeSp.value - 1f).sp,
-                                                    fontWeight = FontWeight.SemiBold, lineHeight = (fontSizeSp.value * 1.4f).sp
+                                                    color = Color(0xFFF3E8FF),
+                                                    fontSize = (fontSizeSp.value - 1f).sp,
+                                                    fontFamily = InterFontFamily,
+                                                    fontWeight = FontWeight.Medium,
+                                                    lineHeight = (fontSizeSp.value * 1.4f).sp
                                                 )
                                             }
                                         }
                                     }
                                 }
                             } else {
-                                // ── AI hikaye metni ──
+                                // AI Story Narrative Paragraphs
                                 val msgChoices = parseBookChoiceOptions(msg.text)
                                 val rawChoiceLines = msgChoices.map { it.rawLine.trim() }.toSet()
                                 val paragraphs = msg.text.split("\n\n")
-                                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                                ) {
                                     paragraphs.forEach { paragraph ->
                                         val trimmed = paragraph.trim()
+                                        if (trimmed.isBlank()) return@forEach
+
+                                        // Skip chapter title line in first message because it's in the Hero Banner Card
+                                        if (idx == 0 && (trimmed.startsWith("#") || (trimmed.startsWith("📖") && trimmed.contains("BÖLÜM")))) {
+                                            return@forEach
+                                        }
+
+                                        // Skip the openingHookLine in first message because it's rendered next to the top-left [✦] star
+                                        if (idx == 0 && trimmed.removePrefix("*").removeSuffix("*").trim() == openingHookLine) {
+                                            return@forEach
+                                        }
+
                                         val lines = trimmed.lines().map { it.trim() }
                                         val isChoiceBlock = lines.all { line ->
                                             line.isBlank() || rawChoiceLines.contains(line) || line.startsWith("🔀") ||
                                             line.startsWith("---") || line.matches(Regex("^(1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|6️⃣|\\d+[\\.\\)]|[-•*])\\s*.*"))
                                         }
                                         if (isChoiceBlock && msgChoices.isNotEmpty()) return@forEach
-                                        if (trimmed.isBlank()) return@forEach
 
                                         when {
-                                            // Bölüm tamamlandı başlığı
                                             trimmed.contains("BÖLÜM") && (trimmed.contains("TAMAMLANDI") || trimmed.contains("SONU")) -> {
-                                                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                                                    contentAlignment = Alignment.Center) {
-                                                    Text(trimmed.replace("#", "").trim(),
-                                                        color = Color(0xFF34D399), fontSize = (fontSizeSp.value + 5f).sp,
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 6.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(
+                                                        text = trimmed.replace("#", "").trim(),
+                                                        color = Color(0xFF34D399),
+                                                        fontSize = (fontSizeSp.value + 3f).sp,
+                                                        fontFamily = InterFontFamily,
                                                         fontWeight = FontWeight.ExtraBold,
                                                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                                        lineHeight = (fontSizeSp.value * 1.5f).sp)
+                                                        lineHeight = (fontSizeSp.value * 1.45f).sp
+                                                    )
                                                 }
                                             }
-                                            // Bölüm başlığı
                                             trimmed.startsWith("#") || (trimmed.startsWith("📖") && trimmed.contains("BÖLÜM")) -> {
-                                                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-                                                    Box(modifier = Modifier.fillMaxWidth().height(1.dp)
-                                                        .background(Brush.linearGradient(listOf(Color.Transparent, Color(0x80A78BFA), Color.Transparent))))
-                                                    Spacer(modifier = Modifier.height(8.dp))
-                                                    Text(trimmed.replace("#", "").trim(),
-                                                        color = Color(0xFFC4B5FD), fontSize = (fontSizeSp.value + 5f).sp,
-                                                        fontWeight = FontWeight.ExtraBold,
+                                                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .height(1.dp)
+                                                            .background(Brush.linearGradient(listOf(Color.Transparent, Color(0x80A78BFA), Color.Transparent)))
+                                                    )
+                                                    Spacer(modifier = Modifier.height(6.dp))
+                                                    Text(
+                                                        text = trimmed.replace("#", "").trim(),
+                                                        color = Color(0xFFC4B5FD),
+                                                        fontSize = (fontSizeSp.value + 3f).sp,
+                                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
+                                                        fontWeight = FontWeight.Bold,
                                                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                                        lineHeight = (fontSizeSp.value * 1.5f).sp)
-                                                    Spacer(modifier = Modifier.height(8.dp))
-                                                    Box(modifier = Modifier.fillMaxWidth().height(1.dp)
-                                                        .background(Brush.linearGradient(listOf(Color.Transparent, Color(0x80A78BFA), Color.Transparent))))
+                                                        lineHeight = (fontSizeSp.value * 1.45f).sp
+                                                    )
+                                                    Spacer(modifier = Modifier.height(6.dp))
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .height(1.dp)
+                                                            .background(Brush.linearGradient(listOf(Color.Transparent, Color(0x80A78BFA), Color.Transparent)))
+                                                    )
                                                 }
                                             }
-                                            // Scene break
                                             trimmed == "---" || trimmed == "---\n---" -> {
-                                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 8.dp),
                                                     horizontalArrangement = Arrangement.Center,
-                                                    verticalAlignment = Alignment.CenterVertically) {
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
                                                     repeat(3) {
-                                                        Box(modifier = Modifier.size(4.dp).clip(CircleShape)
-                                                            .background(Color(0xFF6D28D9).copy(alpha = 0.7f)))
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(4.dp)
+                                                                .clip(CircleShape)
+                                                                .background(Color(0xFF8B5CF6).copy(alpha = 0.75f))
+                                                        )
                                                         if (it < 2) Spacer(modifier = Modifier.width(8.dp))
                                                     }
                                                 }
                                             }
-                                            // Diyalog (tırnak ile başlıyorsa)
-                                            trimmed.startsWith("\"") || trimmed.startsWith("*") || trimmed.startsWith("_") -> {
-                                                Row(modifier = Modifier.fillMaxWidth()) {
-                                                    Box(modifier = Modifier.width(2.dp).fillMaxHeight()
-                                                        .background(Color(0xFF7C3AED).copy(alpha = 0.5f)))
-                                                    Spacer(modifier = Modifier.width(10.dp))
-                                                    Text(trimmed.removePrefix("*").removeSuffix("*").trim(),
-                                                        color = Color(0xFFE2D9F3), fontSize = fontSizeSp,
-                                                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                                                        lineHeight = (fontSizeSp.value * 1.6f).sp)
-                                                }
-                                            }
-                                            // Normal paragraf
                                             else -> {
-                                                Text(trimmed, color = Color(0xFFD4C8E8), fontSize = fontSizeSp,
-                                                    lineHeight = (fontSizeSp.value * 1.65f).sp,
-                                                    fontWeight = FontWeight.Normal)
+                                                Text(
+                                                    text = trimmed.removePrefix("*").removeSuffix("*"),
+                                                    color = Color(0xFFEDE8F8),
+                                                    fontSize = fontSizeSp,
+                                                    fontFamily = InterFontFamily,
+                                                    fontWeight = FontWeight.Normal,
+                                                    lineHeight = (fontSizeSp.value * 1.56f).sp,
+                                                    letterSpacing = 0.1.sp
+                                                )
                                             }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // Sayfa yazılıyor — canvas animasyonu
-                    if (isSending) {
-                        item(key = "sending_book_progress") {
-                            val pageInfinite = rememberInfiniteTransition(label = "pageFlip")
-                            val pageRot by pageInfinite.animateFloat(-12f, 12f,
-                                infiniteRepeatable(tween(600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pr")
-                            val dotAlpha1 by pageInfinite.animateFloat(0.2f, 1f,
-                                infiniteRepeatable(tween(500, 0), RepeatMode.Reverse), label = "d1")
-                            val dotAlpha2 by pageInfinite.animateFloat(0.2f, 1f,
-                                infiniteRepeatable(tween(500, 170), RepeatMode.Reverse), label = "d2")
-                            val dotAlpha3 by pageInfinite.animateFloat(0.2f, 1f,
-                                infiniteRepeatable(tween(500, 340), RepeatMode.Reverse), label = "d3")
+                        // Writing page indicator when AI is generating next scene
+                        if (isSending) {
+                            item(key = "sending_book_progress") {
+                                val pageInfinite = rememberInfiniteTransition(label = "pageFlip")
+                                val dotAlpha1 by pageInfinite.animateFloat(
+                                    0.2f, 1f,
+                                    infiniteRepeatable(tween(500, 0), RepeatMode.Reverse), label = "d1"
+                                )
+                                val dotAlpha2 by pageInfinite.animateFloat(
+                                    0.2f, 1f,
+                                    infiniteRepeatable(tween(500, 170), RepeatMode.Reverse), label = "d2"
+                                )
+                                val dotAlpha3 by pageInfinite.animateFloat(
+                                    0.2f, 1f,
+                                    infiniteRepeatable(tween(500, 340), RepeatMode.Reverse), label = "d3"
+                                )
 
-                            Box(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp).clip(RoundedCornerShape(14.dp))
-                                .background(Brush.linearGradient(listOf(Color(0xFF0F0D20), Color(0xFF1A1535))))
-                                .border(1.dp, Color(0x50A78BFA), RoundedCornerShape(14.dp))
-                                .padding(18.dp), contentAlignment = Alignment.Center) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                                    // Dönen sayfa ikonu
-                                    Canvas(modifier = Modifier.size(32.dp).graphicsLayer { rotationY = pageRot }) {
-                                        drawRoundRect(Color(0xFF4C1D95), cornerRadius = androidx.compose.ui.geometry.CornerRadius(6f),
-                                            size = size * 0.85f, topLeft = Offset(size.width * 0.075f, size.height * 0.075f))
-                                        drawLine(Color(0xFF9F7AEA).copy(alpha = 0.6f),
-                                            Offset(size.width * 0.25f, size.height * 0.35f),
-                                            Offset(size.width * 0.75f, size.height * 0.35f), strokeWidth = 1.5f)
-                                        drawLine(Color(0xFF9F7AEA).copy(alpha = 0.4f),
-                                            Offset(size.width * 0.25f, size.height * 0.5f),
-                                            Offset(size.width * 0.75f, size.height * 0.5f), strokeWidth = 1.2f)
-                                        drawLine(Color(0xFF9F7AEA).copy(alpha = 0.3f),
-                                            Offset(size.width * 0.25f, size.height * 0.65f),
-                                            Offset(size.width * 0.6f, size.height * 0.65f), strokeWidth = 1f)
-                                    }
-                                    Column {
-                                        Text("Kararın işleniyor...", color = Color(0xFFCDA8FF), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 12.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(Brush.linearGradient(listOf(Color(0xFF120B28), Color(0xFF1C113A))))
+                                        .border(1.dp, Color(0x66A855F7), RoundedCornerShape(14.dp))
+                                        .padding(14.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Text(
+                                            text = "Sayfa yazılıyor",
+                                            color = Color(0xFFD8B4FE),
+                                            fontSize = 13.sp,
+                                            fontFamily = InterFontFamily,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
                                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                             listOf(dotAlpha1, dotAlpha2, dotAlpha3).forEach { alpha ->
-                                                Box(modifier = Modifier.size(5.dp).clip(CircleShape)
-                                                    .background(Color(0xFF7C3AED).copy(alpha = alpha)))
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(5.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color(0xFFA855F7).copy(alpha = alpha))
+                                                )
                                             }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // Seçim kartları — animasyonlu premium
-                    if (activeChoices.isNotEmpty() && !isSending) {
-                        item(key = "interactive_choices_section") {
-                            val choiceInfinite = rememberInfiniteTransition(label = "choicePulse")
-                            val choiceBorderAlpha by choiceInfinite.animateFloat(0.5f, 1f,
-                                infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "cb")
+                        // Interactive Choices Section at the bottom of the chapter text
+                        if (activeChoices.isNotEmpty() && !isSending) {
+                            item(key = "interactive_choices_section") {
+                                val choiceInfinite = rememberInfiniteTransition(label = "choicePulse")
+                                val choiceBorderAlpha by choiceInfinite.animateFloat(
+                                    0.55f, 1f,
+                                    infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "cb"
+                                )
 
-                            Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(18.dp))
-                                .background(Brush.linearGradient(listOf(Color(0xFF0F0D1F), Color(0xFF17122E))))
-                                .border(1.5.dp, Brush.linearGradient(listOf(
-                                    Color(0xFF7C3AED).copy(alpha = choiceBorderAlpha),
-                                    Color(0xFF4F46E5).copy(alpha = choiceBorderAlpha)
-                                )), RoundedCornerShape(18.dp))
-                                .padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Box(modifier = Modifier.size(28.dp).clip(CircleShape)
-                                        .background(Brush.radialGradient(listOf(Color(0xFF7C3AED), Color(0xFF4C1D95)))),
-                                        contentAlignment = Alignment.Center) {
-                                        Text("🔀", fontSize = 12.sp)
-                                    }
-                                    Text("SENİN KARARIN", color = Color(0xFFA78BFA), fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                                    Spacer(modifier = Modifier.weight(1f))
-                                    Box(modifier = Modifier.clip(RoundedCornerShape(8.dp))
-                                        .background(Color(0xFF1A1035))
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)) {
-                                        Text("${activeChoices.size} seçenek", color = Color(0xFF7C3AED), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-                                    }
-                                }
-
-                                activeChoices.forEachIndexed { choiceIdx, choice ->
-                                    val choiceScale = remember { androidx.compose.animation.core.Animatable(1f) }
-                                    val choiceScope = rememberCoroutineScope()
-                                    val emoji = listOf("1️⃣", "2️⃣", "3️⃣", "4️⃣")[choiceIdx.coerceAtMost(3)]
-
-                                    Box(modifier = Modifier.fillMaxWidth().graphicsLayer { scaleX = choiceScale.value; scaleY = choiceScale.value }
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(Brush.linearGradient(listOf(Color(0xFF1A1530), Color(0xFF110D25))))
-                                        .border(1.dp, Brush.linearGradient(listOf(Color(0xFF4C1D95), Color(0xFF2D1F50))), RoundedCornerShape(12.dp))
-                                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
-                                            choiceScope.launch {
-                                                choiceScale.animateTo(0.95f, tween(80))
-                                                choiceScale.animateTo(1f, tween(150))
-                                            }
-                                            onSendMessage(choice.rawLine)
-                                        }.padding(14.dp)
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 6.dp, bottom = 10.dp)
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(Brush.linearGradient(listOf(Color(0xFF100A24), Color(0xFF181034))))
+                                        .border(
+                                            1.2.dp,
+                                            Brush.linearGradient(
+                                                listOf(
+                                                    Color(0xFFA855F7).copy(alpha = choiceBorderAlpha),
+                                                    Color(0xFF6366F1).copy(alpha = choiceBorderAlpha)
+                                                )
+                                            ),
+                                            RoundedCornerShape(16.dp)
+                                        )
+                                        .padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(emoji, fontSize = 18.sp)
-                                            Spacer(modifier = Modifier.width(12.dp))
-                                            Text(choice.text, color = Color(0xFFEDE9FE), fontSize = (fontSizeSp.value - 0.5f).sp,
-                                                fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f),
-                                                lineHeight = (fontSizeSp.value * 1.4f).sp)
-                                            Icon(Icons.Default.ChevronRight, contentDescription = null,
-                                                tint = Color(0xFF7C3AED), modifier = Modifier.size(18.dp))
+                                        Text("✦", color = Color(0xFFC4B5FD), fontSize = 13.sp)
+                                        Text(
+                                            text = "SENİN KARARIN",
+                                            color = Color(0xFFD8B4FE),
+                                            fontSize = 11.sp,
+                                            fontFamily = InterFontFamily,
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 1.sp
+                                        )
+                                    }
+
+                                    activeChoices.forEachIndexed { choiceIdx, choice ->
+                                        val choiceScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                                        val choiceScope = rememberCoroutineScope()
+                                        val emoji = listOf("1️⃣", "2️⃣", "3️⃣", "4️⃣")[choiceIdx.coerceAtMost(3)]
+
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .graphicsLayer { scaleX = choiceScale.value; scaleY = choiceScale.value }
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(Brush.linearGradient(listOf(Color(0xFF1C1238), Color(0xFF120B26))))
+                                                .border(
+                                                    1.dp,
+                                                    Brush.linearGradient(listOf(Color(0xFF6D28D9), Color(0xFF4C1D95))),
+                                                    RoundedCornerShape(12.dp)
+                                                )
+                                                .clickable(
+                                                    indication = null,
+                                                    interactionSource = remember { MutableInteractionSource() }
+                                                ) {
+                                                    choiceScope.launch {
+                                                        choiceScale.animateTo(0.96f, tween(80))
+                                                        choiceScale.animateTo(1f, tween(140))
+                                                    }
+                                                    onSendMessage(choice.rawLine)
+                                                }
+                                                .padding(12.dp)
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(emoji, fontSize = 16.sp)
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Text(
+                                                    text = choice.text,
+                                                    color = Color(0xFFEDE9FE),
+                                                    fontSize = (fontSizeSp.value - 1f).sp,
+                                                    fontFamily = InterFontFamily,
+                                                    fontWeight = FontWeight.Medium,
+                                                    modifier = Modifier.weight(1f),
+                                                    lineHeight = (fontSizeSp.value * 1.4f).sp
+                                                )
+                                                Icon(
+                                                    imageVector = Icons.Default.ChevronRight,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFFA855F7),
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // Bölüm sonu — premium card (overlay ayrıca açılıyor)
-                    if (isChapterCompleted && !isSending) {
-                        item(key = "chapter_end_card") {
-                            val chapterEndScale = remember { androidx.compose.animation.core.Animatable(0.85f) }
-                            LaunchedEffect(Unit) { chapterEndScale.animateTo(1f, tween(400, easing = FastOutSlowInEasing)) }
-                            val endInfinite = rememberInfiniteTransition(label = "chEnd")
-                            val endGlow by endInfinite.animateFloat(0.5f, 1f, infiniteRepeatable(tween(1000), RepeatMode.Reverse), label = "eg")
-
-                            Box(modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp)
-                                .graphicsLayer { scaleX = chapterEndScale.value; scaleY = chapterEndScale.value }
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(Brush.linearGradient(listOf(Color(0xFF0A2010), Color(0xFF0D1A0D))))
-                                .border(1.5.dp, Brush.linearGradient(listOf(
-                                    Color(0xFF34D399).copy(alpha = endGlow),
-                                    Color(0xFF10B981).copy(alpha = endGlow)
-                                )), RoundedCornerShape(20.dp))
-                                .padding(20.dp)
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Text(completedChapterTitle, color = Color(0xFF6EE7B7), fontSize = 18.sp, fontWeight = FontWeight.ExtraBold,
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                                    Text(completedChapterDesc, color = Color(0xFFD1FAE5), fontSize = 13.sp,
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center, lineHeight = 19.sp)
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    val summaryBtnScale = remember { androidx.compose.animation.core.Animatable(1f) }
-                                    val summaryScope = rememberCoroutineScope()
-                                    Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                                        .background(Brush.linearGradient(listOf(Color(0xFF059669), Color(0xFF047857))))
-                                        .graphicsLayer { scaleX = summaryBtnScale.value; scaleY = summaryBtnScale.value }
-                                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
-                                            summaryScope.launch { summaryBtnScale.animateTo(0.95f, tween(80)); summaryBtnScale.animateTo(1f, tween(120)) }
-                                            showSummaryModal = true
-                                        }.padding(vertical = 13.dp), contentAlignment = Alignment.Center) {
-                                        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                                            Text("✨ SEÇİM ÖZETİNİ GÖR", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        // Chapter End Card
+                        if (isChapterCompleted && !isSending) {
+                            item(key = "chapter_end_card") {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 10.dp)
+                                        .clip(RoundedCornerShape(18.dp))
+                                        .background(Brush.linearGradient(listOf(Color(0xFF0A2010), Color(0xFF0D1A0D))))
+                                        .border(1.5.dp, Color(0xFF34D399), RoundedCornerShape(18.dp))
+                                        .padding(16.dp)
+                                ) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = completedChapterTitle,
+                                            color = Color(0xFF6EE7B7),
+                                            fontSize = 16.sp,
+                                            fontFamily = InterFontFamily,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                        )
+                                        Text(
+                                            text = completedChapterDesc,
+                                            color = Color(0xFFD1FAE5),
+                                            fontSize = 12.5.sp,
+                                            fontFamily = InterFontFamily,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(Brush.linearGradient(listOf(Color(0xFF059669), Color(0xFF047857))))
+                                                .clickable { showSummaryModal = true }
+                                                .padding(vertical = 11.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = "✨ SEÇİM ÖZETİNİ GÖR",
+                                                color = Color.White,
+                                                fontFamily = InterFontFamily,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                fontSize = 13.sp
+                                            )
                                         }
                                     }
                                 }
@@ -5024,154 +5574,225 @@ fun BookReaderView(
                         }
                     }
                 }
+
+                // Bottom-Right Page/Chapter Indicator: "✦ 1 / 3" (1:1 from reference)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 11.dp)
+                ) {
+                    androidx.compose.foundation.Image(
+                        painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_book_page_star),
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                        modifier = Modifier
+                            .width(23.dp)
+                            .height(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = "$chapterNum / 3",
+                        color = Color(0xFFE2D9F3),
+                        fontSize = 12.sp,
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.Medium,
+                        letterSpacing = 0.5.sp
+                    )
+                }
             }
         }
-    } // end Column
 
-    // ── SİNEMATİK BÖLÜM SONU OVERLAY ────────────────────────────────
-    AnimatedVisibility(
-        visible = showChapterEndOverlay,
-        enter = fadeIn(tween(500)),
-        exit = fadeOut(tween(400))
-    ) {
-        val confettiColors = listOf(
-            Color(0xFF7C3AED), Color(0xFFA78BFA), Color(0xFF34D399),
-            Color(0xFFFBBF24), Color(0xFFF472B6), Color(0xFF60A5FA),
-            Color(0xFFE879F9), Color(0xFF4ADE80)
-        )
-        data class ConfettiParticle(val x: Float, val y: Float, val vx: Float, val vy: Float,
-            val size: Float, val rotation: Float, val vr: Float, val color: Color, val shape: Int)
+        // ── SİNEMATİK BÖLÜM SONU OVERLAY ────────────────────────────────
+        AnimatedVisibility(
+            visible = showChapterEndOverlay,
+            enter = fadeIn(tween(500)),
+            exit = fadeOut(tween(400))
+        ) {
+            val confettiColors = listOf(
+                Color(0xFF7C3AED), Color(0xFFA78BFA), Color(0xFF34D399),
+                Color(0xFFFBBF24), Color(0xFFF472B6), Color(0xFF60A5FA),
+                Color(0xFFE879F9), Color(0xFF4ADE80)
+            )
+            data class ConfettiParticle(
+                val x: Float, val y: Float, val vx: Float, val vy: Float,
+                val size: Float, val rotation: Float, val vr: Float, val color: Color, val shape: Int
+            )
 
-        val overlayInfinite = rememberInfiniteTransition(label = "overlayAnim")
-        val overlayTick by overlayInfinite.animateFloat(0f, 1f,
-            infiniteRepeatable(tween(50, easing = LinearEasing)), label = "ot")
+            val overlayInfinite = rememberInfiniteTransition(label = "overlayAnim")
+            val overlayTick by overlayInfinite.animateFloat(
+                0f, 1f,
+                infiniteRepeatable(tween(50, easing = LinearEasing)), label = "ot"
+            )
 
-        val particles = remember {
-            List(55) {
-                ConfettiParticle(
-                    x = (0..100).random() / 100f,
-                    y = -(0..60).random() / 100f,
-                    vx = ((-3)..3).random() / 300f,
-                    vy = (4..10).random() / 250f,
-                    size = (6..14).random().toFloat(),
-                    rotation = (0..360).random().toFloat(),
-                    vr = ((-5)..5).random().toFloat(),
-                    color = confettiColors.random(),
-                    shape = (0..2).random()
+            val particles = remember {
+                List(55) {
+                    ConfettiParticle(
+                        x = (0..100).random() / 100f,
+                        y = -(0..60).random() / 100f,
+                        vx = ((-3)..3).random() / 300f,
+                        vy = (4..10).random() / 250f,
+                        size = (6..14).random().toFloat(),
+                        rotation = (0..360).random().toFloat(),
+                        vr = ((-5)..5).random().toFloat(),
+                        color = confettiColors.random(),
+                        shape = (0..2).random()
+                    )
+                }
+            }
+            val particleStates = remember { particles.map { androidx.compose.animation.core.Animatable(0f) }.toMutableList() }
+            LaunchedEffect(Unit) {
+                particleStates.forEachIndexed { i, anim ->
+                    launch { anim.animateTo(1f, tween(3500 + i * 20, easing = LinearEasing)) }
+                }
+            }
+
+            val emojiScale = remember { androidx.compose.animation.core.Animatable(0f) }
+            val cardSlide = remember { androidx.compose.animation.core.Animatable(120f) }
+            LaunchedEffect(Unit) {
+                delay(200)
+                launch { emojiScale.animateTo(1f, tween(500, easing = FastOutSlowInEasing)) }
+                launch { cardSlide.animateTo(0f, tween(450, easing = FastOutSlowInEasing)) }
+            }
+
+            val overlayGlow by overlayInfinite.animateFloat(
+                0.6f, 1f,
+                infiniteRepeatable(tween(1200), RepeatMode.Reverse), label = "og"
+            )
+
+            Box(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Brush.radialGradient(listOf(Color(0xCC0A0518), Color(0xEE000005))))
                 )
-            }
-        }
-        val particleStates = remember { particles.map { androidx.compose.animation.core.Animatable(0f) }.toMutableList() }
-        LaunchedEffect(Unit) {
-            particleStates.forEachIndexed { i, anim ->
-                launch { anim.animateTo(1f, tween(3500 + i * 20, easing = LinearEasing)) }
-            }
-        }
 
-        val emojiScale = remember { androidx.compose.animation.core.Animatable(0f) }
-        val cardSlide = remember { androidx.compose.animation.core.Animatable(120f) }
-        LaunchedEffect(Unit) {
-            delay(200)
-            launch { emojiScale.animateTo(1f, tween(500, easing = FastOutSlowInEasing)) }
-            launch { cardSlide.animateTo(0f, tween(450, easing = FastOutSlowInEasing)) }
-        }
-
-        val overlayGlow by overlayInfinite.animateFloat(0.6f, 1f,
-            infiniteRepeatable(tween(1200), RepeatMode.Reverse), label = "og")
-
-        Box(modifier = Modifier.fillMaxSize()) {
-            // Backdrop
-            Box(modifier = Modifier.fillMaxSize()
-                .background(Brush.radialGradient(listOf(Color(0xCC0A0518), Color(0xEE000005)))))
-
-            // Konfeti canvas
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val t = overlayTick
-                particles.forEachIndexed { i, p ->
-                    val progress = particleStates[i].value
-                    val cx = (p.x + p.vx * progress * 80) * size.width
-                    val cy = (p.y + p.vy * progress * 80) * size.height
-                    if (cy < 0 || cy > size.height || cx < 0 || cx > size.width) return@forEachIndexed
-                    val alpha = if (progress > 0.75f) 1f - (progress - 0.75f) * 4f else 1f
-                    val rot = (p.rotation + p.vr * progress * 800) * (Math.PI / 180).toFloat()
-                    when (p.shape) {
-                        0 -> drawCircle(p.color.copy(alpha = alpha.coerceIn(0f, 1f)), p.size, Offset(cx, cy))
-                        1 -> {
-                            rotate(degrees = rot * 57.3f, pivot = Offset(cx, cy)) {
-                                drawRect(p.color.copy(alpha = alpha.coerceIn(0f, 1f)),
-                                    Offset(cx - p.size / 2, cy - p.size / 4),
-                                    androidx.compose.ui.geometry.Size(p.size, p.size / 2))
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val t = overlayTick
+                    particles.forEachIndexed { i, p ->
+                        val progress = particleStates[i].value + (t * 0f)
+                        val cx = (p.x + p.vx * progress * 80) * size.width
+                        val cy = (p.y + p.vy * progress * 80) * size.height
+                        if (cy < 0 || cy > size.height || cx < 0 || cx > size.width) return@forEachIndexed
+                        val alpha = if (progress > 0.75f) 1f - (progress - 0.75f) * 4f else 1f
+                        val rot = (p.rotation + p.vr * progress * 800) * (Math.PI / 180).toFloat()
+                        when (p.shape) {
+                            0 -> drawCircle(p.color.copy(alpha = alpha.coerceIn(0f, 1f)), p.size, Offset(cx, cy))
+                            1 -> {
+                                rotate(degrees = rot * 57.3f, pivot = Offset(cx, cy)) {
+                                    drawRect(
+                                        p.color.copy(alpha = alpha.coerceIn(0f, 1f)),
+                                        Offset(cx - p.size / 2, cy - p.size / 4),
+                                        androidx.compose.ui.geometry.Size(p.size, p.size / 2)
+                                    )
+                                }
                             }
-                        }
-                        else -> {
-                            rotate(degrees = rot * 57.3f, pivot = Offset(cx, cy)) {
-                                drawLine(p.color.copy(alpha = alpha.coerceIn(0f, 1f)),
-                                    Offset(cx - p.size / 2, cy), Offset(cx + p.size / 2, cy), strokeWidth = 2.5f)
+                            else -> {
+                                rotate(degrees = rot * 57.3f, pivot = Offset(cx, cy)) {
+                                    drawLine(
+                                        p.color.copy(alpha = alpha.coerceIn(0f, 1f)),
+                                        Offset(cx - p.size / 2, cy), Offset(cx + p.size / 2, cy), strokeWidth = 2.5f
+                                    )
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // Merkezi kart
-            Box(modifier = Modifier.align(Alignment.Center).fillMaxWidth(0.85f)
-                .graphicsLayer { translationY = cardSlide.value }
-                .clip(RoundedCornerShape(24.dp))
-                .background(Brush.linearGradient(listOf(Color(0xFF0F0A20), Color(0xFF1A1035))))
-                .border(2.dp, Brush.linearGradient(listOf(
-                    Color(0xFF7C3AED).copy(alpha = overlayGlow),
-                    Color(0xFF34D399).copy(alpha = overlayGlow),
-                    Color(0xFF7C3AED).copy(alpha = overlayGlow)
-                )), RoundedCornerShape(24.dp))
-                .padding(28.dp)
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    // Emoji
-                    Box(modifier = Modifier.size(80.dp).graphicsLayer { scaleX = emojiScale.value; scaleY = emojiScale.value }
-                        .clip(CircleShape)
-                        .background(Brush.radialGradient(listOf(Color(0xFF4C1D95), Color(0xFF1A0D3A)))),
-                        contentAlignment = Alignment.Center) {
-                        Text("📖", fontSize = 38.sp)
-                    }
-                    Text(completedChapterTitle, color = Color(0xFF6EE7B7), fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                    Text("Tüm kararların kaydedildi. Seçimlerin hikayeni şekillendirdi.",
-                        color = Color(0xFFBBB0D8), fontSize = 13.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center, lineHeight = 19.sp)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .fillMaxWidth(0.85f)
+                        .graphicsLayer { translationY = cardSlide.value }
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Brush.linearGradient(listOf(Color(0xFF0F0A20), Color(0xFF1A1035))))
+                        .border(
+                            2.dp,
+                            Brush.linearGradient(
+                                listOf(
+                                    Color(0xFF7C3AED).copy(alpha = overlayGlow),
+                                    Color(0xFF34D399).copy(alpha = overlayGlow),
+                                    Color(0xFF7C3AED).copy(alpha = overlayGlow)
+                                )
+                            ),
+                            RoundedCornerShape(24.dp)
+                        )
+                        .padding(28.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(80.dp)
+                                .graphicsLayer { scaleX = emojiScale.value; scaleY = emojiScale.value }
+                                .clip(CircleShape)
+                                .background(Brush.radialGradient(listOf(Color(0xFF4C1D95), Color(0xFF1A0D3A)))),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("📖", fontSize = 38.sp)
+                        }
+                        Text(
+                            text = completedChapterTitle,
+                            color = Color(0xFF6EE7B7),
+                            fontSize = 20.sp,
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Text(
+                            text = "Tüm kararların kaydedildi. Seçimlerin hikayeni şekillendirdi.",
+                            color = Color(0xFFBBB0D8),
+                            fontSize = 13.sp,
+                            fontFamily = InterFontFamily,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            lineHeight = 19.sp
+                        )
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
 
-                    // Seçim özeti butonu
-                    val overlayBtn1Scale = remember { androidx.compose.animation.core.Animatable(1f) }
-                    val overlayScope1 = rememberCoroutineScope()
-                    Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                        .background(Brush.linearGradient(listOf(Color(0xFF059669), Color(0xFF047857))))
-                        .graphicsLayer { scaleX = overlayBtn1Scale.value; scaleY = overlayBtn1Scale.value }
-                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
-                            overlayScope1.launch { overlayBtn1Scale.animateTo(0.94f, tween(80)); overlayBtn1Scale.animateTo(1f, tween(120)) }
-                            showChapterEndOverlay = false
-                            showSummaryModal = true
-                        }.padding(vertical = 13.dp), contentAlignment = Alignment.Center) {
-                        Text("✨ Seçim Özetini Gör", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
-                    }
+                        val overlayBtn1Scale = remember { androidx.compose.animation.core.Animatable(1f) }
+                        val overlayScope1 = rememberCoroutineScope()
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Brush.linearGradient(listOf(Color(0xFF059669), Color(0xFF047857))))
+                                .graphicsLayer { scaleX = overlayBtn1Scale.value; scaleY = overlayBtn1Scale.value }
+                                .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                                    overlayScope1.launch { overlayBtn1Scale.animateTo(0.94f, tween(80)); overlayBtn1Scale.animateTo(1f, tween(120)) }
+                                    showChapterEndOverlay = false
+                                    showSummaryModal = true
+                                }
+                                .padding(vertical = 13.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("✨ Seçim Özetini Gör", color = Color.White, fontFamily = InterFontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                        }
 
-                    // Kapat
-                    val overlayBtn2Scale = remember { androidx.compose.animation.core.Animatable(1f) }
-                    val overlayScope2 = rememberCoroutineScope()
-                    Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFF1A1035))
-                        .border(1.dp, Color(0xFF3D2D60), RoundedCornerShape(14.dp))
-                        .graphicsLayer { scaleX = overlayBtn2Scale.value; scaleY = overlayBtn2Scale.value }
-                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
-                            overlayScope2.launch { overlayBtn2Scale.animateTo(0.94f, tween(80)); overlayBtn2Scale.animateTo(1f, tween(120)) }
-                            showChapterEndOverlay = false
-                        }.padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-                        Text("Şimdi Değil", color = Color(0xFF9F7AEA), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        val overlayBtn2Scale = remember { androidx.compose.animation.core.Animatable(1f) }
+                        val overlayScope2 = rememberCoroutineScope()
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xFF1A1035))
+                                .border(1.dp, Color(0xFF3D2D60), RoundedCornerShape(14.dp))
+                                .graphicsLayer { scaleX = overlayBtn2Scale.value; scaleY = overlayBtn2Scale.value }
+                                .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                                    overlayScope2.launch { overlayBtn2Scale.animateTo(0.94f, tween(80)); overlayBtn2Scale.animateTo(1f, tween(120)) }
+                                    showChapterEndOverlay = false
+                                }
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Şimdi Değil", color = Color(0xFF9F7AEA), fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        }
                     }
                 }
             }
         }
-    }
     }
 }
 

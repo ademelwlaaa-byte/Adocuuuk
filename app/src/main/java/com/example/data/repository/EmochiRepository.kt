@@ -346,7 +346,9 @@ class EmochiRepository(
 
         fun determineEffectiveRoleMultiplier(member: CastMemberEntity, sceneContext: String): Double {
             val lowerContext = sceneContext.lowercase(java.util.Locale("tr", "TR"))
-            val isWorkContext = listOf("iş", "ofis", "rapor", "toplantı", "görev", "şirket", "proje", "patron", "çalış", "mesai", "bütçe", "sunum").any { lowerContext.contains(it) }
+            val workWords = listOf("işyeri", "ofis", "rapor", "toplantı", "görev", "şirket", "proje", "patron", "çalış", "mesai", "bütçe", "sunum")
+            val hasStandaloneIs = Regex("""\biş\b""").containsMatchIn(lowerContext)
+            val isWorkContext = hasStandaloneIs || workWords.any { lowerContext.contains(it) }
             val isPersonalContext = listOf("özel", "anı", "eski", "akşam", "sevgili", "aşk", "ev", "kahve", "sohbet", "yemek", "kalp", "romantik", "baş başa", "gece").any { lowerContext.contains(it) }
 
             val candidateRoles = mutableListOf<String>()
@@ -564,7 +566,12 @@ class EmochiRepository(
             return modelIds
                 .filter { id ->
                     val lower = id.lowercase()
-                    smallKeywords.any { lower.contains(it) } || paramRegex.containsMatchIn(lower)
+                    val param = paramRegex.find(lower)?.groupValues?.get(1)?.toIntOrNull()
+                    if (param != null && param > 20) {
+                        false
+                    } else {
+                        smallKeywords.any { lower.contains(it) } || (param != null && param <= 20)
+                    }
                 }
                 .map { id ->
                     val lower = id.lowercase()
@@ -839,7 +846,7 @@ class EmochiRepository(
             needsSummarization = false,
             emotionState = calculatedBaseline,
             previousEmotionState = calculatedBaseline,
-            storyCalendarDate = "",
+            storyCalendarDate = "2026-08-29",
             storyDayCounter = 1L,
             currentAge = birthAge,
             lastMessageTimestamp = System.currentTimeMillis(),
@@ -2612,7 +2619,10 @@ class EmochiRepository(
                     member.affectionScore in 40..59 && member.role.contains("Yabancı", ignoreCase = true) -> "Tanıdık"
                     else -> member.role
                 }
-                val newMult = calculateCastMemberDifficultyMultiplier(updatedRole, member.name, sceneContext)
+                val newMult = when (updatedRole) {
+                    "Yakın Dost" -> 1.3
+                    else -> calculateCastMemberDifficultyMultiplier(updatedRole, member.name, sceneContext)
+                }
                 castMemberDao.updateCastMember(
                     member.copy(
                         role = updatedRole,
@@ -3180,10 +3190,11 @@ class EmochiRepository(
     suspend fun checkAndGenerateCheckpoint(botId: String, totalMsgCount: Int, apiKey: String? = null) {
         if (totalMsgCount <= 0 || totalMsgCount % 50 != 0) return
 
-        // Geçici checkpoint varsa ve özet çağrısı başarılı olursa yerinde güncellenir
-        val existingTemp = memoryCheckpointDao.getLatestTemporaryCheckpoint(botId)
-        val maxCp = memoryCheckpointDao.getMaxCheckpointNumber(botId) ?: 0
-        val newCpNum = if (existingTemp != null) existingTemp.checkpointNumber else maxCp + 1
+        // Geçici checkpoint varsa ve aynı pencere için özet çağrısı başarılı olursa yerinde güncellenir
+        val targetCpNum = totalMsgCount / 50
+        val latestTemp = memoryCheckpointDao.getLatestTemporaryCheckpoint(botId)
+        val existingTemp = if (latestTemp != null && latestTemp.checkpointNumber == targetCpNum) latestTemp else null
+        val newCpNum = targetCpNum
         val startIdx = (newCpNum - 1) * 50
         val endIdx = newCpNum * 50
 
@@ -3235,12 +3246,14 @@ class EmochiRepository(
         val vec = computeEmbedding(summaryText, apiKey)
 
         if (existingTemp != null) {
-            // Geçici olanı yerinde güncelle
-            memoryCheckpointDao.upgradeTemporaryCheckpoint(
-                id = existingTemp.id,
-                summaryText = summaryText,
-                embedding = floatArrayToJson(vec)
-            )
+            if (!isTemporary) {
+                // Geçici olanı yerinde güncelle (kalıcı özet ile)
+                memoryCheckpointDao.upgradeTemporaryCheckpoint(
+                    id = existingTemp.id,
+                    summaryText = summaryText,
+                    embedding = floatArrayToJson(vec)
+                )
+            }
         } else {
             memoryCheckpointDao.insertCheckpoint(
                 MemoryCheckpointEntity(

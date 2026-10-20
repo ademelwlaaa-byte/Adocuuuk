@@ -1712,7 +1712,7 @@ class MemoryEmotionRegressionTest {
             id = 77L,
             label = "MyCustomOpenAI",
             baseUrl = "https://custom.llm.local/v1",
-            apiKeyEncrypted = "sk-test-custom-key",
+            apiKeyEncrypted = com.example.util.KeystoreEncryptionManager.encrypt("sk-test-custom-key"),
             modelName = "llama-3.3-70b-instruct", // Ana pahalı model
             apiFormat = "openai",
             utilityModel = "llama-3.1-8b-instant", // Ucuz utility model
