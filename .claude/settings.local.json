@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(jar tf *)",
+      "Read(//data/data/com.termux/files/home/tmp_jar2/**)",
+      "Bash(javap com/example/util/OutputQualityValidator.class)",
+      "Bash(grep -n \"^        }$\\\\|^    }$\\\\|content = \\\\|Scaffold\\(\" /data/data/com.termux/files/home/proje6565/app/src/main/java/com/example/ui/screens/ChatScreen.kt)",
+      "Bash(iconv -f UTF-8 -t UTF-8 /data/data/com.termux/files/home/proje6565/app/src/main/java/com/example/data/repository/TimePerception.kt)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(python3 *)",
+      "Read(//tmp/**)",
+      "Bash(jar xf *)",
+      "Bash(javap com/example/ui/theme/AppColors.class)",
+      "Bash(javap com/example/data/local/StoryProgressEntity.class)"
+    ]
+  }
+}
