@@ -1,6 +1,6 @@
 @file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 package com.example.ui.components
-@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+
 import com.example.ui.theme.AppColors
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -311,14 +311,14 @@ fun CharacterEmotionControlModal(
                 .clip(RoundedCornerShape(24.dp))
                 .background(
                     androidx.compose.ui.graphics.Brush.verticalGradient(
-                        listOf(Color(0xFF160832), Color(0xFF0B0620))
+                        listOf(Color(0xF2160832), Color(0xF50B0620))
                     )
                 )
                 .border(
                     androidx.compose.foundation.BorderStroke(
                         1.3.dp,
                         androidx.compose.ui.graphics.Brush.linearGradient(
-                            listOf(Color(0xFFE879A0), Color(0xFF7C3AED), Color(0xFF9333EA))
+                            listOf(Color(0xFFE9D5FF), Color(0xFFE879A0), Color(0xFF9333EA), Color(0xFF60A5FA))
                         )
                     ),
                     RoundedCornerShape(24.dp)
@@ -346,7 +346,7 @@ fun CharacterEmotionControlModal(
                                 .border(
                                     1.2.dp,
                                     androidx.compose.ui.graphics.Brush.linearGradient(
-                                        listOf(Color(0xFFF472B6), Color(0xFFBE185D))
+                                        listOf(Color(0xFFF472B6), Color(0xFF9333EA))
                                     ),
                                     RoundedCornerShape(14.dp)
                                 ),
@@ -354,39 +354,48 @@ fun CharacterEmotionControlModal(
                         ) { Text("🎭", fontSize = 20.sp) }
                         Spacer(Modifier.width(10.dp))
                         Column {
-                            Text(
-                                "Duygu & İlişki Paneli",
-                                color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                androidx.compose.foundation.Image(
+                                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_title_sparkle),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp).padding(end = 4.dp)
+                                )
+                                Text(
+                                    "Duygu & İlişki Paneli",
+                                    color = Color.White,
+                                    fontSize = 16.5.sp,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                             Text(
                                 "Tüm karakterler için duygu yönetimi",
-                                color = Color(0xFFCCA8E0), fontSize = 11.sp
+                                color = Color(0xFFC4B5FD), fontSize = 11.sp
                             )
                         }
                     }
                     Box(
                         modifier = Modifier
-                            .size(34.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0x30E879A0))
-                            .border(1.dp, Color(0x50E879A0), RoundedCornerShape(10.dp))
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(Brush.linearGradient(listOf(Color(0xD91E0E3A), Color(0xD9120826))))
+                            .border(1.1.dp, Brush.linearGradient(listOf(Color(0xFFE9D5FF), Color(0xFFE879A0), Color(0xFF9333EA))), RoundedCornerShape(11.dp))
                             .clickable { onDismiss() },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Close, null, tint = Color(0xFFF9A8D4), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Close, null, tint = Color(0xFFF9A8D4), modifier = Modifier.size(17.dp))
                     }
                 }
 
-                // Gradient separator
-                Spacer(Modifier.height(12.dp))
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(1.dp).background(
-                        androidx.compose.ui.graphics.Brush.horizontalGradient(
-                            listOf(Color.Transparent, Color(0x80E879A0), Color(0x807C3AED), Color.Transparent)
-                        )
-                    )
+                // Ornamental Aetheria diamond divider
+                Spacer(Modifier.height(8.dp))
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_header_divider),
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
+                    modifier = Modifier.fillMaxWidth().height(14.dp)
                 )
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
 
                 // ── CHARACTER TABS ─────────────────────────────────────
                 Row(

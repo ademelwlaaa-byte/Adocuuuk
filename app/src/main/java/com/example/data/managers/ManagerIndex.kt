@@ -1,23 +1,41 @@
 package com.example.data.managers
 
-/**
- * Bölüm 6 — Kod Organizasyonu
- *
- * EmochiRepository büyük olduğu için sorumluluklarını 5 Manager sınıfına
- * delege etmek üzere tasarlandı. Her Manager, constructor aracılığıyla
- * yalnızca ihtiyaç duyduğu DAO'ları alır; gizli/global erişim yoktur.
- *
- * Manager'lar EmochiRepository.kt içindeki Kotlin extension fonksiyonları
- * (EmochiRepository_*.kt dosyaları) tarafından çağrılır. Bu yaklaşım:
- *   - Mevcut tüm çağrı noktalarını kırmaz (EmochiRepository API'si aynı kalır)
- *   - Test edilebilirliği artırır (Manager'lar bağımsız test edilebilir)
- *   - IDE'de dosya bazında navigation sağlar
- *
- * Dosya haritası:
- *   WorldStateManager.kt      → Takvim, zaman atlama, mevsim, rutin
- *   CastMemberManager.kt      → Karakter tespiti, blacklist, rol yeniden değerlendirme
- *   MemoryRetrievalManager.kt → Hafıza getirme, FTS+embedding, checkpoint, graf
- *   EmotionEngineManager.kt   → Duygu hesaplama, clamp/delta, reappraisal
- *   ProviderFallbackManager.kt → Fallback zinciri, rate limit, model doğrulama
- */
-object ManagerIndex
+import com.example.data.local.AppDatabase
+import com.example.data.repository.ProviderFallbackLogEntry
+
+class ManagerIndex(
+    db: AppDatabase,
+    onLogFallback: (ProviderFallbackLogEntry) -> Unit
+) {
+    val castMemberManager = CastMemberManager(
+        castMemberDao = db.castMemberDao(),
+        emotionDao = db.characterEmotionDao(),
+        botDao = db.botDao()
+    )
+
+    val emotionEngineManager = EmotionEngineManager(
+        botDao = db.botDao(),
+        emotionDao = db.characterEmotionDao(),
+        emotionHistoryDao = db.emotionHistoryDao(),
+        affectionEventDao = db.affectionEventDao()
+    )
+
+    val memoryRetrievalManager = MemoryRetrievalManager(
+        fragmentDao = db.memoryFragmentDao(),
+        memoryFactDao = db.memoryFactDao(),
+        memoryEventDao = db.memoryEventDao(),
+        memoryCheckpointDao = db.memoryCheckpointDao()
+    )
+
+    val providerFallbackManager = ProviderFallbackManager(
+        customProviderDao = db.customProviderDao(),
+        onLogFallback = onLogFallback
+    )
+
+    val worldStateManager = WorldStateManager(
+        botDao = db.botDao(),
+        routineDao = db.routineDao(),
+        entityRelationDao = db.entityRelationDao(),
+        entityRegistryDao = db.entityRegistryDao()
+    )
+}

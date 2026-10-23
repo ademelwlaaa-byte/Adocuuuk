@@ -1343,7 +1343,7 @@ class EmochiRepository(
                 keyCharactersJson = """[{"id":"c1","name":"Valeria","desc":"Büyü teknolojisi uzmanı lonca lideri"},{"id":"c2","name":"Kael","desc":"Sessiz ve tehlikeli paralı asker"}]""",
                 userCharName = "Rider",
                 userCharDesc = "Loncanın en yetenekli bilgi tüccarı.",
-                openingMessage = "*Neon tabelaların yağmurlu asfalt üzerinde mor ve mavi yansımalar oluşturduğu sokağın köşesinde duruyorsun. Yağmurluğunun yakasını kaldırdın. Valeria, arkasındaki iki muhafızla birlikte gölgelerin arasından süzülerek sana doğru yaklaştı.*\n\n\"Tam zamanında geldin Rider,\" dedi Valeria, sesindeki elektronik bozulmayı gizlemeye çalışarak. \"İstediğimiz veri çipi elimizde ama izimizdeler. Planı devreye sokmaya hazır mısın?\"",
+                openingMessage = "*Neon tabelaların yağmurlu asfalt üzerinde mor ve mavi yansımalar oluşturduğu sokağın köşesinde duruyorsun. Yağmurluğunun yakasını kaldırdın. Valeria, arkasındaki iki muhafızla birlikte gölgelerin arasından süzülerek sana doğru yaklaştı.*\n\n“Tam zamanında geldin Rider,” dedi Valeria, sesindeki elektronik bozulmayı gizlemeye çalışarak.\n\n“İstediğimiz veri çipi elimizde ama izimizdeler. Planı devreye sokmaya hazır mısın?”",
                 writingStyle = "rp",
                 intensity = "normal",
                 customLength = "default",
@@ -1853,6 +1853,19 @@ class EmochiRepository(
      * Alias çözümü: resolveAliases ile kısa adlar kanonik ada dönüştürülür.
      * Enjeksiyon koruması: Bu fonksiyon yalnızca MODEL cevabından çağrılmalı (user mesajından değil).
      */
+    fun extractStateJson(rawResponse: String): JSONObject? {
+        if (rawResponse.isBlank()) return null
+
+        fun tryParse(raw: String): JSONObject? {
+            return try {
+                EmotionEngine.resolveAliases(JSONObject(raw))
+            } catch (_: Exception) {
+                // Toleranslı düzeltmeler: tek tırnak, sondaki virgül, eksik kapanış parantezi
+                try {
+                    val fixed = raw
+                        .replace(Regex("""'([^']*)'"""), "\"$1\"")   // tek tırnak → çift tırnak
+                        .replace(Regex(""",\s*([}\]])"""), "$1")      // sondaki virgül
+                        .let { s -> if (!s.trimEnd().endsWith("}")) "$s}" else s } // eksik }
                     EmotionEngine.resolveAliases(JSONObject(fixed))
                 } catch (_: Exception) { null }
             }
@@ -1886,6 +1899,222 @@ class EmochiRepository(
         return null
     }
 
+    fun calculateAffectionDifficultyMultiplier(aiName: String, personality: String, scenario: String): Double {
+        val combined = "$aiName $personality $scenario".lowercase()
+        return when {
+            // Power distance / Hierarchy
+            combined.contains("patron") || combined.contains("boss") || combined.contains("yönetici") ||
+            combined.contains("müdür") || combined.contains("ceo") || combined.contains("öğretmen") ||
+            combined.contains("hoca") || combined.contains("profesör") || combined.contains("doktor") ||
+            combined.contains("komutan") || combined.contains("subay") || combined.contains("amir") ||
+            combined.contains("ünlü") || combined.contains("idol") || combined.contains("kral") ||
+            combined.contains("imparator") -> 0.75
+
+            // Neutral / Stranger / Service
+            combined.contains("yabancı") || combined.contains("yeni tanış") || combined.contains("müşteri") ||
+            combined.contains("barista") || combined.contains("resepsiyonist") || combined.contains("garson") ||
+            combined.contains("sürücü") || combined.contains("taksi") -> 0.9
+
+            // Intimate / Childhood / Established bond
+            combined.contains("çocukluk arkadaşı") || combined.contains("eski dost") || combined.contains("sevgili") ||
+            combined.contains("eş ") || combined.contains("nişanlı") || combined.contains("aşık") ||
+            combined.contains("partner") || combined.contains("anne") || combined.contains("baba") ||
+            combined.contains("kardeş") || combined.contains("karı") || combined.contains("koca") -> 1.4
+
+            // Peer / Familiar baseline
+            else -> 1.1
+        }
+    }
+
+    suspend fun parseAndApplyEmotionUpdates(botId: String, rawResponse: String, userAlreadyJumped: Boolean = false): String {
+        val bot = botDao.getBotById(botId) ?: return cleanEmotionTags(rawResponse)
+        val settings = getOrCreateSettings()
+        val castList = parseKeyCharacters(bot.keyCharactersJson)
+        val totalMsgCount = messageDao.getMessageCountForBot(botId)
+
+        val current = EmotionState.fromJson(bot.emotionState)
+        val prevAffection = current.affection
+        val prevPeak = maxOf(current.peakAffectionScore, prevAffection)
+
+        val baseMultiplier = if (bot.baseAffectionDifficulty > 0.0) {
+            bot.baseAffectionDifficulty
+        } else {
+            calculateAffectionDifficultyMultiplier(bot.aiName, bot.aiPersonality, bot.scenario)
+        }
+
+        // 1. Extract JSON block (Schema V2/V3) — yalnızca model cevabından (enjeksiyon koruması)
+        val jsonObj = extractStateJson(rawResponse)
+
+        var parsedDelta = 0
+        var parsedReason = ""
+        var parsedSetting = "private"
+        var parsedMode = "casual"
+        var parsedTension = "none"
+        // V3.1 yeni alanlar
+        var parsedWhy = ""           // delta gerekçesi (why alanı veya delta.reason)
+        var parsedTrigIds = emptyList<String>()  // anlamsal tetik kimlikleri
+        var parsedReapp = false      // reappraisal aktif mi
+        var parsedSuppNew = ""       // suppressed_emotion (supp/supp_emo)
+
+        var rawPrimaryEmotions = current.primaryEmotions
+        var rawRelationshipAxes = current.relationshipAxes
+        var rawPhysicalComfort = current.physicalComfortScore
+        var rawObsession = current.obsessionScore
+        var rawDominant = current.dominantEmotion
+        var rawSuppressed = current.suppressedEmotion
+        var parsedSelfCheck = com.example.data.local.SelfCheckData()
+        var parsedWorldState = com.example.data.local.WorldState.fromJson(bot.worldAtmosphere)
+
+        if (jsonObj != null) {
+            val primObj = jsonObj.optJSONObject("primary_emotions")
+            if (primObj != null) {
+                rawPrimaryEmotions = com.example.data.local.PrimaryEmotions.fromJsonObject(primObj)
+            }
+
+            val relObj = jsonObj.optJSONObject("relationship_axes")
+            if (relObj != null) {
+                rawRelationshipAxes = com.example.data.local.RelationshipAxes.fromJsonObject(relObj)
+            }
+
+            rawPhysicalComfort = jsonObj.optInt("physicalComfortScore", current.physicalComfortScore).coerceIn(0, 100)
+            rawObsession = jsonObj.optInt("obsessionScore", current.obsessionScore).coerceIn(0, 100)
+            rawDominant = jsonObj.optString("dominant_emotion", current.dominantEmotion)
+            rawSuppressed = jsonObj.optString("suppressed_emotion", current.suppressedEmotion)
+
+            val deltaObj = jsonObj.optJSONObject("delta")
+            if (deltaObj != null) {
+                parsedDelta = deltaObj.optInt("value", 0)
+                parsedReason = deltaObj.optString("reason", "")
+                val ctxObj = deltaObj.optJSONObject("context")
+                if (ctxObj != null) {
+                    parsedSetting = ctxObj.optString("setting", "private")
+                    parsedMode = ctxObj.optString("mode", "casual")
+                    parsedTension = ctxObj.optString("tension", "none")
+                }
+            }
+
+            // V3.1: "why" alanı — delta gerekçesi (delta.reason yoksa buradan alınır)
+            parsedWhy = jsonObj.optString("why", "").ifBlank { parsedReason }
+
+            // V3.1: "trig" — anlamsal olarak dokunan hassas konu kimlikleri (LLM kararı)
+            val trigArr = jsonObj.optJSONArray("trig")
+            if (trigArr != null) {
+                val ids = mutableListOf<String>()
+                for (i in 0 until trigArr.length()) {
+                    val id = trigArr.optString(i, "").trim()
+                    if (id.isNotBlank()) ids.add(id)
+                }
+                parsedTrigIds = ids
+            }
+
+            // V3.1: "reapp" — reappraisal aktif bayrağı
+            parsedReapp = jsonObj.optBoolean("reapp", false)
+
+            // V3.1: "supp" / "supp_emo" — bastırılan duygu (yalnızca geçerli duygu adı kabul edilir)
+            val suppRaw = jsonObj.optString("suppressed_emotion", "").ifBlank {
+                jsonObj.optString("supp_emo", "")
+            }
+            parsedSuppNew = suppRaw.ifBlank { rawSuppressed }
+
+            val worldObj = jsonObj.optJSONObject("world_state")
+            if (worldObj != null) {
+                parsedWorldState = com.example.data.local.WorldState.fromJson(worldObj.toString())
+            }
+
+            val storySkipObj = jsonObj.optJSONObject("story_time_skip")
+            if (storySkipObj != null && storySkipObj.optBoolean("detected", false)) {
+                val daysFromJson = storySkipObj.optInt("days", 0)
+                val amountStr = storySkipObj.optString("amount", "")
+                val daysToSkip = if (daysFromJson > 0) daysFromJson
+                    else TimePerceptionEngine.parseStoryTimeJump(amountStr).daysToAdvance
+                val sceneTimeRaw = storySkipObj.optString("scene_time", "")
+                val newSceneTime = TimePerceptionEngine.validateSceneTime(sceneTimeRaw)
+                // 4.5: Parse başarısız → detected=false gibi davran, log tut
+                if (daysToSkip <= 0 && amountStr.isNotBlank()) {
+                    android.util.Log.w("TimeSkipParse", "[timeSkipParseFailureLog] provider=${settings.selectedProvider} amount='$amountStr' raw=${rawResponse.take(120)}")
+                    try {
+                        db.timePerceptionMismatchLogDao().insertLog(
+                            com.example.data.local.TimePerceptionMismatchLogEntity(
+                                botId = botId,
+                                userMessageText = "story_time_skip parse failure",
+                                modelResponseText = rawResponse.take(300),
+                                detectedTimeExpression = amountStr,
+                                codeCalculatedDays = 0,
+                                mismatchReason = "timeSkipParseFailure:provider=${settings.selectedProvider} amount='$amountStr'",
+                                timestamp = System.currentTimeMillis()
+                            )
+                        )
+                    } catch (_: Exception) {}
+                }
+                // Çift ilerleme önlemi: kullanıcı tarafı zaten ilerlediyse model atlama sayısını uygulama
+                val shouldApplyModelJump = daysToSkip > 0 && !userAlreadyJumped
+                if (shouldApplyModelJump) {
+                    val (newDate, newDayCounter, newAge) = TimePerceptionEngine.advanceCalendarDateAndCheckAge(
+                        currentCalendarDateStr = bot.storyCalendarDate,
+                        currentDayCounter = bot.storyDayCounter,
+                        elapsedDaysToAdd = daysToSkip,
+                        birthDateStr = bot.birthDate,
+                        initialAge = bot.initialAge
+                    )
+                    botDao.insertOrUpdate(
+                        bot.copy(
+                            storyCalendarDate = newDate,
+                            storyDayCounter = newDayCounter,
+                            currentAge = newAge,
+                            sceneTime = newSceneTime ?: bot.sceneTime
+                        )
+                    )
+                    updateCastMembersAgeForBot(bot.id, newDate)
+                } else if (newSceneTime != null) {
+                    botDao.insertOrUpdate(bot.copy(sceneTime = newSceneTime))
+                }
+            } else if (storySkipObj == null && rawResponse.contains("story_time_skip", ignoreCase = true)) {
+                // story_time_skip alanı model çıktısında var ama JSON parse edilemedi
+                android.util.Log.w("TimeSkipParse", "[timeSkipParseFailureLog] story_time_skip field present but failed to parse. provider=${settings.selectedProvider}")
+                try {
+                    db.timePerceptionMismatchLogDao().insertLog(
+                        com.example.data.local.TimePerceptionMismatchLogEntity(
+                            botId = botId,
+                            userMessageText = "story_time_skip json missing",
+                            modelResponseText = rawResponse.take(300),
+                            detectedTimeExpression = "",
+                            codeCalculatedDays = 0,
+                            mismatchReason = "timeSkipParseFailure:json_missing provider=${settings.selectedProvider}",
+                            timestamp = System.currentTimeMillis()
+                        )
+                    )
+                } catch (_: Exception) {}
+            }
+
+            val scObj = jsonObj.optJSONObject("self_check")
+            if (scObj != null) {
+                parsedSelfCheck = com.example.data.local.SelfCheckData.fromJsonObject(scObj)
+            }
+        } else {
+            // Tolerant Regex Parsing for LLM7 or weak JSON models
+            val regexDeltaMatch = Regex("""(?i)(?:delta|value|affectionScore|score)\s*[:=]\s*([+-]?\d+)""").find(rawResponse)
+            val regexReasonMatch = Regex("""(?i)(?:reason|neden)\s*[:=]\s*["']?([^"\n\r,\]\}]+)["']?""").find(rawResponse)
+            
+            if (regexDeltaMatch != null) {
+                parsedDelta = regexDeltaMatch.groupValues[1].toIntOrNull() ?: 0
+                parsedReason = regexReasonMatch?.groupValues[1]?.trim() ?: "Regex Tolerant Parsing"
+            } else {
+                parsedDelta = 0
+            }
+
+            try {
+                malformedOutputLogDao.insertLog(
+                    com.example.data.local.MalformedOutputLogEntity(
+                        botId = botId,
+                        provider = "llm7",
+                        model = "default",
+                        rawOutput = rawResponse.take(1000),
+                        errorMessage = if (regexDeltaMatch != null) "JSON_SYNTAX_ERROR_RECOVERED_BY_REGEX" else "JSON_AND_REGEX_PARSING_FAILED",
+                        timestamp = System.currentTimeMillis()
+                    )
+                )
+            } catch (_: Exception) {}
+        }
 
         // 2. Personality Profile Multipliers & Multi-dimensional Clamping
         val personality = if (bot.baselineEmotionAnalysisJson.isNotBlank()) {
@@ -5176,10 +5405,513 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         )
     }
 
+    data class ProviderTestResult(
+        val isSuccess: Boolean,
+        val supportsFunctionCalling: Boolean = false,
+        val errorMessage: String = "",
+        val rawResponse: String = "",
+        val latencyMs: Long = 0L
+    )
 
+    val managers: com.example.data.managers.ManagerIndex by lazy {
+        com.example.data.managers.ManagerIndex(
+            db = db,
+            onLogFallback = { entry -> logFallbackAttempt(entry) }
+        )
+    }
 
+    // --- CastMemberManager Delegations ---
 
+    fun cleanCharacterNameCandidate(raw: String): String =
+        managers.castMemberManager.cleanCharacterNameCandidate(raw)
+
+    fun isMainOrUserCharacter(candidateRaw: String, bot: BotEntity): Boolean =
+        managers.castMemberManager.isMainOrUserCharacter(candidateRaw, bot)
+
+    suspend fun ensureKeyCharacterMirroredAsCastMember(botId: String, keyChar: KeyCharacter) =
+        managers.castMemberManager.ensureKeyCharacterMirroredAsCastMember(botId, keyChar)
+
+    suspend fun ensureSideCharacterRegistered(
+        botId: String,
+        charName: String,
+        role: String = "Yan Karakter",
+        initialMood: String = "nötr",
+        affectionDelta: Int = 0,
+        cueSentence: String = "",
+        bot: BotEntity? = null
+    ) = managers.castMemberManager.ensureSideCharacterRegistered(
+        botId = botId,
+        rawCharacterName = charName,
+        role = role,
+        initialMood = initialMood,
+        affectionDelta = affectionDelta,
+        cueSentence = cueSentence,
+        bot = bot
+    )
+
+    suspend fun reEvaluateCastMemberRolesIfNeeded(
+        botId: String,
+        currentMessageCount: Int,
+        sceneContext: String = ""
+    ) = managers.castMemberManager.reEvaluateCastMemberRolesIfNeeded(
+        botId = botId,
+        currentMessageCount = currentMessageCount,
+        sceneContext = sceneContext
+    )
+
+    suspend fun getCastMembersForBot(botId: String): List<CastMemberEntity> =
+        managers.castMemberManager.getCastMembersForBot(botId)
+
+    suspend fun getFirstPendingCastMember(botId: String): CastMemberEntity? =
+        managers.castMemberManager.getFirstPendingCastMember(botId)
+
+    suspend fun confirmPendingCastMember(botId: String, castMemberId: Long) =
+        managers.castMemberManager.confirmPendingCastMember(botId, castMemberId)
+
+    suspend fun dismissPendingCastMember(botId: String, castMemberId: Long) =
+        managers.castMemberManager.dismissPendingCastMember(botId, castMemberId)
+
+    suspend fun blacklistCastMember(botId: String, castMemberId: Long) =
+        managers.castMemberManager.blacklistCastMember(botId, castMemberId)
+
+    suspend fun deleteAutoAddedCastMemberById(botId: String, castMemberId: Long) =
+        managers.castMemberManager.deleteAutoAddedCastMemberById(botId, castMemberId)
+
+    suspend fun deleteCharacterAndBlacklist(botId: String, characterName: String) =
+        managers.castMemberManager.deleteCharacterAndBlacklist(botId, characterName)
+
+    suspend fun updateCastMembersAgeForBot(botId: String, currentStoryCalendarDateStr: String) =
+        managers.castMemberManager.updateCastMembersAgeForBot(botId, currentStoryCalendarDateStr)
+
+    // --- WorldStateManager Delegations ---
+
+    suspend fun extractAndSaveRoutinesFromBotPersonality(
+        botId: String,
+        personality: String,
+        scenario: String
+    ): List<RoutineEntity> = managers.worldStateManager.extractAndSaveRoutinesFromBotPersonality(
+        botId = botId,
+        personality = personality,
+        scenario = scenario
+    )
+
+    suspend fun extractAndSaveEntityRelations(
+        botId: String,
+        text: String,
+        currentMessageIndex: Int = 0
+    ) = managers.worldStateManager.extractAndSaveEntityRelations(
+        botId = botId,
+        text = text,
+        currentMessageIndex = currentMessageIndex
+    )
+
+    // --- MemoryRetrievalManager Delegations ---
+
+    fun floatArrayToJson(arr: FloatArray): String =
+        managers.memoryRetrievalManager.floatArrayToJson(arr)
+
+    fun jsonToFloatArray(str: String): FloatArray =
+        managers.memoryRetrievalManager.jsonToFloatArray(str)
+
+    fun cosineSimilarity(v1: FloatArray, v2: FloatArray): Float =
+        managers.memoryRetrievalManager.cosineSimilarity(v1, v2)
+
+    suspend fun computeEmbedding(text: String, apiKey: String? = null): FloatArray =
+        managers.memoryRetrievalManager.computeEmbedding(
+            text = text,
+            apiKey = apiKey ?: getBuildConfigKey()
+        )
+
+    suspend fun getRelevantMemoryFragments(
+        bot: BotEntity,
+        queryText: String
+    ): List<MemoryFragmentEntity> = managers.memoryRetrievalManager.getRelevantMemoryFragments(
+        bot = bot,
+        queryText = queryText,
+        apiKey = getBuildConfigKey()
+    )
+
+    suspend fun deleteMemoryFact(id: Long) =
+        managers.memoryRetrievalManager.deleteMemoryFact(id)
+
+    suspend fun deleteMemoryEvent(id: Long) =
+        managers.memoryRetrievalManager.deleteMemoryEvent(id)
+
+    suspend fun updateMemoryFact(fact: MemoryFactEntity) =
+        managers.memoryRetrievalManager.updateMemoryFact(fact)
+
+    suspend fun updateMemoryEvent(event: MemoryEventEntity) =
+        managers.memoryRetrievalManager.updateMemoryEvent(event)
+
+    suspend fun deleteAllAutoMemories(botId: String) =
+        managers.memoryRetrievalManager.deleteAllAutoMemories(botId)
+
+    // --- System Prompt & AI Generation ---
+
+    fun buildSystemPrompt(
+        bot: BotEntity,
+        settings: UserSettingsEntity,
+        includeStyleGuide: Boolean = true,
+        relevantFragments: List<MemoryFragmentEntity> = emptyList(),
+        relevantEvents: List<MemoryEventEntity> = emptyList(),
+        relevantFacts: List<MemoryFactEntity> = emptyList(),
+        registeredEntities: List<EntityRegistryEntity> = emptyList(),
+        recentCheckpoints: List<MemoryCheckpointEntity> = emptyList(),
+        castMembers: List<CastMemberEntity> = emptyList(),
+        lastMessageTimestamp: Long = 0L,
+        totalMessageCount: Int = 0,
+        compactMode: Boolean = false
+    ): String {
+        val sb = StringBuilder()
+        val aiTitle = if (bot.mode == "universe") bot.universeName.ifBlank { bot.aiName } else bot.aiName.ifBlank { bot.universeName }
+        val userTitle = bot.userCharName.ifBlank { "Kullanıcı" }
+
+        sb.appendLine("Sen '$aiTitle' rolündesin ve '$userTitle' ile Türkçe interaktif bir rol yapma / hikaye sahnesindesin.")
+        if (bot.aiPersonality.isNotBlank()) {
+            sb.appendLine("\n[KARAKTER KİŞİLİĞİ VE GEÇMİŞİ]")
+            sb.appendLine(bot.aiPersonality.trim())
+        }
+        if (bot.scenario.isNotBlank()) {
+            sb.appendLine("\n[SAHNE VE SENARYO]")
+            sb.appendLine(bot.scenario.trim())
+        }
+        if (bot.pinnedMemory.isNotBlank()) {
+            sb.appendLine("\n[SABİTLENMİŞ HAFIZA / EVREN KURALLARI]")
+            sb.appendLine(bot.pinnedMemory.trim())
+        }
+        if (bot.userCharDesc.isNotBlank()) {
+            sb.appendLine("\n[KULLANICI KARAKTERİ: $userTitle]")
+            sb.appendLine(bot.userCharDesc.trim())
+        }
+        if (bot.storyCalendarDate.isNotBlank() || bot.sceneTime.isNotBlank()) {
+            sb.appendLine("\n[ZAMAN VE TAKVİM]: ${bot.storyCalendarDate} ${bot.sceneTime}".trim())
+        }
+        if (bot.storyNotes.isNotBlank()) {
+            sb.appendLine("\n[HİKAYE NOTLARI]")
+            sb.appendLine(bot.storyNotes.trim())
+        }
+        if (bot.memoryNotes.isNotBlank()) {
+            sb.appendLine("\n[UZUN SÜRELİ HAFIZA NOTLARI]")
+            sb.appendLine(bot.memoryNotes.trim())
+        }
+        if (relevantFacts.isNotEmpty()) {
+            sb.appendLine("\n[BİLİNEN OLGULAR]")
+            relevantFacts.take(10).forEach { f ->
+                sb.appendLine("- (${f.subject}) ${f.key}: ${f.value}")
+            }
+        }
+        if (relevantEvents.isNotEmpty()) {
+            sb.appendLine("\n[ÖNEMLİ GEÇMİŞ OLAYLAR]")
+            relevantEvents.take(8).forEach { ev ->
+                sb.appendLine("- ${ev.description}")
+            }
+        }
+        if (relevantFragments.isNotEmpty()) {
+            sb.appendLine("\n[İLGİLİ HAFIZA KESİTLERİ]")
+            relevantFragments.take(6).forEach { frag ->
+                sb.appendLine("- ${frag.content}")
+            }
+        }
+        if (castMembers.isNotEmpty()) {
+            sb.appendLine("\n[SAHNEDEKİ YAN KARAKTERLER]")
+            castMembers.take(10).forEach { cm ->
+                sb.appendLine("- ${cm.name} (${cm.role}, Yakınlık: ${cm.affectionScore}/100): ${cm.description}")
+            }
+        }
+        val consistencyNote = pendingConsistencyNoteMap.remove(bot.id)
+        if (!consistencyNote.isNullOrBlank()) {
+            sb.appendLine("\n[TUTARLILIK UYARISI]: $consistencyNote")
+        }
+        val decayNote = pendingDecayNoteMap.remove(bot.id)
+        if (!decayNote.isNullOrBlank()) {
+            sb.appendLine("\n[ZAMAN ATLAMASI NOTU]: $decayNote")
+        }
+        if (includeStyleGuide && !compactMode) {
+            sb.appendLine("\n[ANLATIM KURALLARI]")
+            sb.appendLine("- Diyalogları doğal, edebi ve karakterin kişiliğine uygun yaz.")
+            sb.appendLine("- Kullanıcının yerine karar verme veya konuşma.")
+        }
+        return sb.toString().trim()
+    }
+
+    suspend fun executeModelRequestWithFallback(
+        model: String,
+        settings: UserSettingsEntity,
+        systemPrompt: String,
+        messages: List<MessageEntity>,
+        botId: String? = null
+    ): com.example.data.api.ModelResponseResult {
+        return managers.providerFallbackManager.executeWithFallback(
+            model = model,
+            settings = settings,
+            systemPrompt = systemPrompt,
+            messages = messages,
+            buildConfigGeminiKey = getBuildConfigKey(),
+            tools = com.example.data.api.MemoryToolRegistry.CENTRAL_TOOLS
+        )
+    }
+
+    suspend fun generateAiReply(
+        bot: BotEntity,
+        messages: List<MessageEntity>
+    ): AiReplyResult = withContext(Dispatchers.IO) {
+        if (bot.id.startsWith("book_") || bot.mode == "book") {
+            val bookReply = generateDeterministicBookReply(bot, messages)
+            return@withContext AiReplyResult(
+                replyText = bookReply,
+                usedProvider = "Interaktif Kitap Motoru",
+                systemPromptSnapshot = "Book Mode (${bot.aiName.ifBlank { bot.universeName }})"
+            )
+        }
+
+        val settings = getOrCreateSettings()
+        val effectiveModel = getEffectiveModelForProvider(settings)
+        val (updatedBot, contextMessages) = prepareContextAndSummarizeIfNeeded(bot, messages, effectiveModel)
+
+        val lastUserText = contextMessages.lastOrNull { it.role == "user" }?.text.orEmpty()
+        val relevantFragments = getRelevantMemoryFragments(updatedBot, lastUserText)
+        val activeFacts = try { memoryFactDao.getActiveFacts(updatedBot.id) } catch (_: Exception) { emptyList() }
+        val activeEvents = try { memoryEventDao.getActiveEvents(updatedBot.id) } catch (_: Exception) { emptyList() }
+        val castMembers = try { getCastMembersForBot(updatedBot.id) } catch (_: Exception) { emptyList() }
+
+        val sysPrompt = buildSystemPrompt(
+            bot = updatedBot,
+            settings = settings,
+            includeStyleGuide = true,
+            relevantFragments = relevantFragments,
+            relevantEvents = activeEvents,
+            relevantFacts = activeFacts,
+            castMembers = castMembers,
+            lastMessageTimestamp = contextMessages.lastOrNull()?.timestamp ?: 0L,
+            totalMessageCount = messages.size
+        )
+
+        val response = executeModelRequestWithFallback(
+            model = effectiveModel,
+            settings = settings,
+            systemPrompt = sysPrompt,
+            messages = contextMessages,
+            botId = updatedBot.id
+        )
+        recordTokenUsage(updatedBot.id, response.promptTokens, response.candidateTokens)
+
+        if (response.toolCalls.isNotEmpty()) {
+            try {
+                for (tc in response.toolCalls) {
+                    val content = tc.arguments["content"]?.toString()?.trim().orEmpty()
+                    val category = tc.arguments["category"]?.toString()?.trim().orEmpty()
+                    val subject = tc.arguments["subject"]?.toString()?.trim().orEmpty().ifBlank { "kullanıcı" }
+                    if (tc.name == "save_memory" && content.isNotBlank()) {
+                        if (category.equals("event", ignoreCase = true)) {
+                            memoryEventDao.insertEvent(
+                                MemoryEventEntity(
+                                    id = 0L,
+                                    botId = updatedBot.id,
+                                    timestamp = System.currentTimeMillis(),
+                                    description = content,
+                                    importanceScore = 7,
+                                    embedding = "[]",
+                                    supersededBy = null,
+                                    isBotSaved = true,
+                                    realWorldTimestamp = System.currentTimeMillis(),
+                                    storyDayIndex = updatedBot.storyDayCounter,
+                                    storyCalendarDateStr = updatedBot.storyCalendarDate
+                                )
+                            )
+                        } else {
+                            memoryFactDao.insertFact(
+                                MemoryFactEntity(
+                                    id = 0L,
+                                    botId = updatedBot.id,
+                                    subject = subject,
+                                    key = "bilgi",
+                                    value = content,
+                                    confidence = "HIGH",
+                                    lastConfirmedAt = System.currentTimeMillis(),
+                                    userCorrected = false,
+                                    supersededBy = null,
+                                    isBotSaved = true,
+                                    embeddingJson = "[]"
+                                )
+                            )
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        try {
+            parseAndApplyEmotionUpdates(
+                botId = updatedBot.id,
+                rawResponse = response.text
+            )
+        } catch (_: Exception) {}
+
+        val cleanedText = cleanEmotionTags(response.text).ifBlank { response.text.trim() }
+        AiReplyResult(
+            replyText = cleanedText,
+            usedProvider = response.usedProvider,
+            systemPromptSnapshot = sysPrompt
+        )
+    }
+
+    suspend fun generateOpeningMessage(bot: BotEntity): String = withContext(Dispatchers.IO) {
+        if (bot.openingMessage.isNotBlank()) return@withContext bot.openingMessage
+        val settings = getOrCreateSettings()
+        val effectiveModel = getEffectiveModelForProvider(settings)
+        val sysPrompt = buildSystemPrompt(bot, settings, compactMode = true)
+        val initMsg = MessageEntity(
+            id = "opening_gen",
+            botId = bot.id,
+            role = "user",
+            text = "Senaryoya uygun etkileyici bir açılış sahnesi ve ilk diyaloğu Türkçe olarak yaz.",
+            timestamp = System.currentTimeMillis()
+        )
+        return@withContext try {
+            val res = executeModelRequestWithFallback(effectiveModel, settings, sysPrompt, listOf(initMsg), bot.id)
+            cleanEmotionTags(res.text).ifBlank { "Gözlerini sana çevirdi ve hafifçe gülümsedi. \"Sonunda geldin.\"" }
+        } catch (_: Exception) {
+            "Gözlerini sana çevirdi ve hafifçe gülümsedi. \"Sonunda geldin.\""
+        }
+    }
+
+    suspend fun updateMemorySummaries(bot: BotEntity, messages: List<MessageEntity>) = withContext(Dispatchers.IO) {
+        if (messages.size < 16) return@withContext
+        val settings = getOrCreateSettings()
+        val effectiveModel = getEffectiveModelForProvider(settings)
+        try {
+            prepareContextAndSummarizeIfNeeded(bot, messages, effectiveModel)
+        } catch (_: Exception) {}
+    }
+
+    suspend fun callLlmForAudit(
+        settings: UserSettingsEntity,
+        systemPrompt: String,
+        userMessage: String,
+        botId: String = ""
+    ): String = withContext(Dispatchers.IO) {
+        try {
+            val model = getEffectiveModelForProvider(settings)
+            val msg = MessageEntity(
+                id = "audit_${System.currentTimeMillis()}",
+                botId = botId,
+                role = "user",
+                text = userMessage,
+                timestamp = System.currentTimeMillis()
+            )
+            val res = executeModelRequestWithFallback(model, settings, systemPrompt, listOf(msg), botId.ifBlank { null })
+            res.text.trim()
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    // --- Provider Connection Tests ---
+
+    suspend fun testLlm7Connection(): ProviderTestResult =
+        managers.providerFallbackManager.testEndpointConnection(
+            url = "https://api.llm7.io/v1/chat/completions",
+            apiKey = "",
+            modelName = "default",
+            apiFormat = "openai",
+            testTools = true
+        )
+
+    suspend fun testPollinationsConnection(modelName: String = "openai"): ProviderTestResult =
+        managers.providerFallbackManager.testEndpointConnection(
+            url = "https://text.pollinations.ai/openai/chat/completions",
+            apiKey = "",
+            modelName = modelName.ifBlank { "openai" },
+            apiFormat = "openai",
+            testTools = false
+        )
+
+    suspend fun fetchNvidiaModels(apiKey: String): List<String> =
+        managers.providerFallbackManager.fetchModelsFromOpenAiCompatibleEndpoint(
+            baseUrl = "https://integrate.api.nvidia.com/v1",
+            apiKey = apiKey
+        )
+
+    suspend fun simulateNvidiaRateLimitTest(
+        apiKey: String,
+        modelName: String = "deepseek-ai/deepseek-v4-flash"
+    ): ProviderTestResult = testNvidiaConnection(apiKey, modelName)
+
+    suspend fun testCustomProviderConnection(
+        baseUrl: String,
+        apiKey: String,
+        modelName: String,
+        apiFormat: String = "openai"
+    ): ProviderTestResult = managers.providerFallbackManager.testEndpointConnection(
+        url = baseUrl,
+        apiKey = apiKey,
+        modelName = modelName,
+        apiFormat = apiFormat,
+        testTools = true
+    )
+
+    suspend fun testOpenRouterConnection(
+        apiKey: String,
+        modelName: String = "deepseek/deepseek-chat"
+    ): ProviderTestResult = managers.providerFallbackManager.testEndpointConnection(
+        url = "https://openrouter.ai/api/v1/chat/completions",
+        apiKey = apiKey,
+        modelName = modelName.ifBlank { "deepseek/deepseek-chat" },
+        apiFormat = "openai",
+        testTools = true
+    )
+
+    suspend fun testNvidiaConnection(
+        apiKey: String,
+        modelName: String = ""
+    ): ProviderTestResult = managers.providerFallbackManager.testEndpointConnection(
+        url = "https://integrate.api.nvidia.com/v1/chat/completions",
+        apiKey = apiKey,
+        modelName = modelName.ifBlank { "deepseek-ai/deepseek-v4-flash" },
+        apiFormat = "openai",
+        testTools = false
+    )
+
+    suspend fun testMistralConnection(
+        apiKey: String,
+        modelName: String = "mistral-large-latest"
+    ): ProviderTestResult = managers.providerFallbackManager.testEndpointConnection(
+        url = "https://api.mistral.ai/v1/chat/completions",
+        apiKey = apiKey,
+        modelName = modelName.ifBlank { "mistral-large-latest" },
+        apiFormat = "openai",
+        testTools = true
+    )
 
     // --- Import / Export Backup Snapshot ---
 
+    suspend fun exportDataSnapshot(): String = withContext(Dispatchers.IO) {
+        val bots = botDao.getAllBotsList()
+        val allMessages = mutableListOf<MessageEntity>()
+        for (b in bots) {
+            allMessages.addAll(messageDao.getMessagesForBotList(b.id))
+        }
+        val settings = getOrCreateSettings()
+        val snapshot = BackupSnapshot(
+            version = 1,
+            bots = bots,
+            messages = allMessages,
+            settings = settings
+        )
+        backupAdapter.toJson(snapshot)
+    }
 
+    suspend fun importDataSnapshot(jsonStr: String) = withContext(Dispatchers.IO) {
+        if (jsonStr.isBlank()) return@withContext
+        val snapshot = backupAdapter.fromJson(jsonStr) ?: return@withContext
+        db.withTransaction {
+            for (b in snapshot.bots) {
+                botDao.insertOrUpdate(b)
+            }
+            for (m in snapshot.messages) {
+                messageDao.insertMessage(m)
+            }
+            settingsDao.insertOrUpdate(snapshot.settings)
+        }
+    }
+}

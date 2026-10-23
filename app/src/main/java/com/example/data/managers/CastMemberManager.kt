@@ -1,211 +1,300 @@
 package com.example.data.managers
 
 import com.example.data.local.BotDao
+import com.example.data.local.BotEntity
 import com.example.data.local.CastMemberDao
 import com.example.data.local.CastMemberEntity
-import com.example.data.local.MessageDao
-import com.example.data.repository.CastDetectorEngine
+import com.example.data.local.CharacterEmotionDao
+import com.example.data.local.CharacterEmotionEntity
+import com.example.data.local.EmotionState
+import com.example.data.repository.EmochiRepository
+import com.example.data.repository.KeyCharacter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
+import org.json.JSONArray
+import java.util.Locale
 
-/**
- * Bölüm 6 — CastMemberManager
- *
- * Sorumlu olduğu alanlar:
- *   - Karakter tespiti (detectAndRegisterCastMembers) koordinasyonu
- *   - Blacklist yönetimi: getBlacklistedCharacterNames, addToBlacklist
- *   - Pending banner state: checkForPendingCastMembers, confirmPendingCast, dismissPendingCast
- *   - Periyodik rol yeniden değerlendirme: reEvaluateCastMemberRolesIfNeeded (3.5)
- *   - Çoklu rol/bağlam çarpan seçimi: determineEffectiveRoleMultiplier (3.6)
- *   - Manuel + otomatik birleşik model: isManuallyAdded = !isAutoAdded (3.4)
- *   - Silme + blacklist dialog desteği (3.3)
- *
- * NOT: evaluateCharacterSignificance LLM çağrısı içerdiğinden EmochiRepository
- * içinde kalmaya devam eder; bu manager koordinasyon ve DB işlemlerini üstlenir.
- */
 class CastMemberManager(
-    private val botDao: BotDao,
     private val castMemberDao: CastMemberDao,
-    private val messageDao: MessageDao
+    private val emotionDao: CharacterEmotionDao,
+    private val botDao: BotDao
 ) {
+    private val turkishLocale = Locale("tr", "TR")
 
-    // ─── Blacklist ────────────────────────────────────────────────────────────
-
-    suspend fun getBlacklistedNames(botId: String): Set<String> = withContext(Dispatchers.IO) {
-        val dbBlacklisted = castMemberDao.getBlacklistedCastMembers(botId).map { it.name.lowercase() }.toSet()
-        val engineBlacklisted = CastDetectorEngine.getBlacklistedNames(botId)
-        dbBlacklisted + engineBlacklisted
+    fun cleanCharacterNameCandidate(raw: String): String {
+        val cleaned = raw
+            .replace(Regex("""\[.*?\]"""), "")
+            .replace(Regex("""\(.*?\)"""), "")
+            .replace(Regex("""["'«»“”‘’*`_~]"""), "")
+            .trim()
+        val firstPart = cleaned.split(":", "-", "—", "|", "/").firstOrNull()?.trim() ?: cleaned
+        return firstPart.take(45).trim()
     }
 
-    suspend fun addToBlacklist(botId: String, name: String) = withContext(Dispatchers.IO) {
-        CastDetectorEngine.addToBlacklist(botId, name)
-        // Ensure DB record exists and is marked blacklisted
-        val existing = castMemberDao.getCastMembersByBotId(botId).firstOrNull { it.name.equals(name, ignoreCase = true) }
-        if (existing != null) {
-            castMemberDao.updateCastMember(existing.copy(isBlacklisted = true))
+    fun isMainOrUserCharacter(candidateRaw: String, bot: BotEntity): Boolean {
+        val clean = cleanCharacterNameCandidate(candidateRaw).lowercase(turkishLocale)
+        if (clean.isBlank() || clean.length < 2) return true
+
+        val mainNames = listOf(
+            bot.aiName,
+            bot.userCharName,
+            bot.universeName,
+            "kullanıcı",
+            "user",
+            "anlatıcı",
+            "narrator",
+            "sistem",
+            "system",
+            "ana karakter",
+            "sen",
+            "ben"
+        ).map { it.trim().lowercase(turkishLocale) }.filter { it.isNotBlank() }
+
+        return mainNames.any { main ->
+            clean == main ||
+                (main.length >= 3 && clean.startsWith("$main ")) ||
+                (clean.length >= 3 && main.startsWith("$clean "))
         }
-        android.util.Log.d("CastMemberManager", "[blacklist] '$name' added for bot $botId")
     }
 
-    suspend fun isBlacklisted(botId: String, name: String): Boolean =
-        getBlacklistedNames(botId).contains(name.lowercase())
+    suspend fun ensureKeyCharacterMirroredAsCastMember(botId: String, keyChar: KeyCharacter) = withContext(Dispatchers.IO) {
+        val cleanName = cleanCharacterNameCandidate(keyChar.name)
+        if (cleanName.length < 2) return@withContext
 
-    // ─── Birleşik veri modeli (3.4) ──────────────────────────────────────────
+        val blacklisted = castMemberDao.getBlacklistedNamesForBot(botId).map { it.lowercase(turkishLocale) }
+        if (blacklisted.contains(cleanName.lowercase(turkishLocale))) return@withContext
 
-    /**
-     * Manuel eklenen karakteri CastMemberEntity olarak kaydeder (isAutoAdded=false).
-     * Bot oluşturma ekranındaki KeyCharacter girişlerinden çağrılır.
-     */
-    suspend fun ensureManualCastMember(
+        val existing = castMemberDao.findByName(botId, cleanName)
+        val baseMult = EmochiRepository.calculateCastMemberDifficultyMultiplier(
+            role = keyChar.desc.ifBlank { "Anahtar Karakter" },
+            characterName = cleanName,
+            cueSentence = keyChar.desc
+        )
+        if (existing == null) {
+            castMemberDao.insertCastMember(
+                CastMemberEntity(
+                    botId = botId,
+                    name = cleanName,
+                    description = keyChar.desc,
+                    role = keyChar.desc.take(40).ifBlank { "Anahtar Karakter" },
+                    affectionScore = 50,
+                    relationshipState = "Tanıdık",
+                    importanceScore = 8,
+                    isAutoAdded = false,
+                    isBlacklisted = false,
+                    detectionConfidence = 100,
+                    pendingUserConfirmation = false,
+                    baseAffectionDifficultyMultiplier = baseMult
+                )
+            )
+        } else if (existing.description.isBlank() && keyChar.desc.isNotBlank()) {
+            castMemberDao.updateCastMember(
+                existing.copy(
+                    description = keyChar.desc,
+                    pendingUserConfirmation = false
+                )
+            )
+        }
+    }
+
+    suspend fun ensureSideCharacterRegistered(
         botId: String,
-        name: String,
-        description: String,
-        role: String,
-        affectionScore: Int,
-        difficultyMultiplier: Double
-    ): CastMemberEntity = withContext(Dispatchers.IO) {
-        val existing = castMemberDao.getCastMembersByBotId(botId)
-            .firstOrNull { it.name.equals(name, ignoreCase = true) }
-        if (existing != null) {
-            val updated = existing.copy(
-                description = description.ifBlank { existing.description },
-                role = role.ifBlank { existing.role },
-                affectionScore = affectionScore,
-                baseAffectionDifficultyMultiplier = difficultyMultiplier,
-                isAutoAdded = false  // promote to manually added
-            )
-            castMemberDao.updateCastMember(updated)
-            android.util.Log.d("CastMemberManager", "[manual] Promoted '$name' isAutoAdded=false for bot $botId")
-            updated
-        } else {
-            val now = System.currentTimeMillis()
-            val entity = CastMemberEntity(
-                botId = botId,
-                name = name,
-                description = description,
-                role = role,
-                affectionScore = affectionScore.coerceIn(0, 100),
-                relationshipState = "Tanıdık",
-                firstAppearedAt = now,
-                importanceScore = 85,
-                isAutoAdded = false,
-                isBlacklisted = false,
-                baseAffectionDifficultyMultiplier = difficultyMultiplier
-            )
-            castMemberDao.insertCastMember(entity)
-            android.util.Log.d("CastMemberManager", "[manual] Inserted '$name' isAutoAdded=false for bot $botId")
-            entity
-        }
-    }
-
-    // ─── Çoklu rol / bağlam çarpanı (3.6) ───────────────────────────────────
-
-    /**
-     * Sahne bağlamına göre aktif rolü ve çarpanını döndürür.
-     * mode=formal + iş bağlamı → kısıtlayıcı çarpan (min)
-     * mode=casual + kişisel bağlam → cömert çarpan (max)
-     */
-    fun determineEffectiveMultiplier(
-        member: CastMemberEntity,
-        sceneMode: String,
-        sceneContext: String
-    ): Pair<String, Double> {
-        val primaryMult = member.baseAffectionDifficultyMultiplier
-        val secondaryRole = member.secondaryRole
-        val secondaryMult = if (!secondaryRole.isNullOrBlank()) {
-            roleMult(secondaryRole)
-        } else null
-
-        val isWorkContext = sceneMode.lowercase() in listOf("formal", "professional") ||
-            sceneContext.any { word -> listOf("iş", "ofis", "patron", "toplantı", "çalış", "proje", "müdür").any { sceneContext.contains(it) } }
-        val isPersonalContext = sceneMode.lowercase() in listOf("casual", "romantic", "intimate") ||
-            listOf("özel", "aşk", "romantik", "akşam", "sevgi", "hasret", "özlem").any { sceneContext.contains(it) }
-
-        val activeMult = when {
-            secondaryMult == null -> primaryMult
-            isWorkContext && !isPersonalContext -> {
-                val chosen = minOf(primaryMult, secondaryMult)
-                android.util.Log.d("CastMemberManager", "[B3.6] MultiRole '${member.name}' roles=[${member.role}, $secondaryRole] isWork=true → min=$chosen")
-                chosen
-            }
-            isPersonalContext && !isWorkContext -> {
-                val chosen = maxOf(primaryMult, secondaryMult)
-                android.util.Log.d("CastMemberManager", "[B3.6] MultiRole '${member.name}' roles=[${member.role}, $secondaryRole] isPersonal=true → max=$chosen")
-                chosen
-            }
-            else -> {
-                val chosen = minOf(primaryMult, secondaryMult)
-                android.util.Log.d("CastMemberManager", "[B3.6] MultiRole '${member.name}' roles=[${member.role}, $secondaryRole] mixed → min=$chosen")
-                chosen
-            }
-        }
-
-        val activeRole = if (secondaryMult != null && activeMult == secondaryMult && !secondaryRole.isNullOrBlank()) secondaryRole else member.role
-        return Pair(activeRole, activeMult)
-    }
-
-    private fun roleMult(role: String): Double {
-        val r = role.lowercase()
-        return when {
-            r.contains("patron") || r.contains("müdür") || r.contains("amir") || r.contains("otorite") -> 0.75
-            r.contains("yabancı") || r.contains("stranger") -> 0.85
-            r.contains("sevgili") || r.contains("lover") || r.contains("aşk") || r.contains("romantik") -> 1.40
-            r.contains("arkadaş") || r.contains("dost") -> 1.10
-            r.contains("aile") || r.contains("kardeş") || r.contains("anne") || r.contains("baba") -> 1.20
-            else -> 1.05
-        }
-    }
-
-    // ─── Periyodik rol yeniden değerlendirme (3.5) ───────────────────────────
-
-    /**
-     * Her 30 mesajda bir veya büyük hikaye olayı sonrası çağrılır.
-     * affectionScore'u değiştirmez — sadece baseAffectionDifficultyMultiplier güncellenir.
-     * Gerçek LLM değerlendirmesi EmochiRepository.reEvaluateCastMemberRolesIfNeeded'de.
-     */
-    suspend fun shouldReEvaluateRoles(botId: String, currentMessageCount: Int): Boolean {
-        val members = castMemberDao.getCastMembersByBotId(botId)
-        return members.any { m ->
-            val isPeriodicDue = currentMessageCount - (m.lastRoleEvaluationIndex ?: 0) >= 30
-            isPeriodicDue
-        }
-    }
-
-    suspend fun updateMemberMultiplierSafely(
-        member: CastMemberEntity,
-        newMultiplier: Double,
-        newRole: String,
-        currentMessageCount: Int
+        rawCharacterName: String,
+        role: String = "Yan Karakter",
+        initialMood: String = "nötr",
+        affectionDelta: Int = 0,
+        cueSentence: String = "",
+        bot: BotEntity? = null
     ) = withContext(Dispatchers.IO) {
-        val clamped = newMultiplier.coerceIn(0.50, 2.50)
-        // affectionScore DOKUNULMAZ — sadece multiplier ve rol güncellenir (3.5)
+        val cleanName = cleanCharacterNameCandidate(rawCharacterName)
+        if (cleanName.length < 2) return@withContext
+
+        val targetBot = bot ?: botDao.getBotById(botId)
+        if (targetBot != null && isMainOrUserCharacter(cleanName, targetBot)) return@withContext
+
+        val blacklisted = castMemberDao.getBlacklistedNamesForBot(botId).map { it.lowercase(turkishLocale) }
+        if (blacklisted.contains(cleanName.lowercase(turkishLocale))) return@withContext
+
+        val existing = castMemberDao.findByName(botId, cleanName)
+        val (isSignificant, evalRole, confidence, difficultyMult) = EmochiRepository.evaluateCharacterSignificance(
+            candidateName = cleanName,
+            sceneContext = cueSentence.ifBlank { role }
+        )
+        val resolvedRole = if (role.isNotBlank() && role != "Yan Karakter") role else evalRole
+
+        if (existing == null) {
+            if (!isSignificant && confidence < 45) return@withContext
+            val initialAffection = (50 + affectionDelta.coerceIn(-15, 15)).coerceIn(0, 100)
+            castMemberDao.insertCastMember(
+                CastMemberEntity(
+                    botId = botId,
+                    name = cleanName,
+                    description = cueSentence.take(240),
+                    role = resolvedRole,
+                    affectionScore = initialAffection,
+                    relationshipState = initialMood.ifBlank { "Tanıdık" },
+                    importanceScore = if (confidence >= 80) 7 else 5,
+                    isAutoAdded = true,
+                    isBlacklisted = false,
+                    detectionConfidence = confidence,
+                    pendingUserConfirmation = confidence in 50..79,
+                    appearanceCount = 1,
+                    lastSceneContext = cueSentence.take(200),
+                    baseAffectionDifficultyMultiplier = difficultyMult
+                )
+            )
+        } else if (!existing.isBlacklisted) {
+            val newCount = existing.appearanceCount + 1
+            val updatedAffection = (existing.affectionScore + affectionDelta.coerceIn(-15, 15)).coerceIn(0, 100)
+            castMemberDao.updateCastMember(
+                existing.copy(
+                    role = if (existing.role.isBlank() || existing.role == "Yan Karakter") resolvedRole else existing.role,
+                    affectionScore = updatedAffection,
+                    appearanceCount = newCount,
+                    lastSceneContext = if (cueSentence.isNotBlank()) cueSentence.take(200) else existing.lastSceneContext
+                )
+            )
+        }
+
+        val existingEmotion = emotionDao.getEmotionForCharacter(botId, cleanName)
+        if (existingEmotion == null) {
+            val baseState = EmotionState.calculateBaselineEmotionState(
+                aiName = cleanName,
+                personality = resolvedRole,
+                scenario = cueSentence
+            ).copy(dominantEmotion = initialMood.ifBlank { "nötr" })
+            emotionDao.insertOrUpdate(
+                CharacterEmotionEntity(
+                    botId = botId,
+                    characterName = cleanName,
+                    emotionState = baseState.toJson()
+                )
+            )
+        }
+    }
+
+    suspend fun reEvaluateCastMemberRolesIfNeeded(
+        botId: String,
+        currentMessageCount: Int,
+        sceneContext: String = ""
+    ) = withContext(Dispatchers.IO) {
+        if (sceneContext.isBlank()) return@withContext
+        val members = castMemberDao.getConfirmedCastMembersForBot(botId)
+        for (member in members) {
+            if (currentMessageCount - member.lastRoleEvaluationIndex < 8) continue
+            if (!sceneContext.contains(member.name, ignoreCase = true)) continue
+
+            val (_, inferredRole, _, newMult) = EmochiRepository.evaluateCharacterSignificance(
+                candidateName = member.name,
+                sceneContext = sceneContext
+            )
+            val updatedSecondary = if (inferredRole != member.role && inferredRole != "Yan Karakter") {
+                inferredRole
+            } else {
+                member.secondaryRole
+            }
+            val rolesSet = linkedSetOf<String>()
+            if (member.role.isNotBlank()) rolesSet.add(member.role)
+            if (updatedSecondary.isNotBlank()) rolesSet.add(updatedSecondary)
+            val multiArr = JSONArray()
+            rolesSet.forEach { multiArr.put(it) }
+
+            castMemberDao.updateCastMember(
+                member.copy(
+                    secondaryRole = updatedSecondary,
+                    multiRoleJson = multiArr.toString(),
+                    lastRoleEvaluationIndex = currentMessageCount,
+                    lastSceneContext = sceneContext.take(200),
+                    baseAffectionDifficultyMultiplier = if (member.baseAffectionDifficultyMultiplier > 0.0) {
+                        member.baseAffectionDifficultyMultiplier
+                    } else {
+                        newMult
+                    }
+                )
+            )
+        }
+    }
+
+    suspend fun getCastMembersForBot(botId: String): List<CastMemberEntity> = withContext(Dispatchers.IO) {
+        castMemberDao.getCastMembersForBot(botId).filter { !it.isBlacklisted }
+    }
+
+    suspend fun getFirstPendingCastMember(botId: String): CastMemberEntity? = withContext(Dispatchers.IO) {
+        castMemberDao.getPendingCastMembersForBot(botId).firstOrNull { !it.isBlacklisted }
+    }
+
+    suspend fun confirmPendingCastMember(botId: String, castMemberId: Long) = withContext(Dispatchers.IO) {
+        val member = castMemberDao.getCastMembersForBot(botId).firstOrNull { it.id == castMemberId } ?: return@withContext
         castMemberDao.updateCastMember(
             member.copy(
-                role = newRole,
-                baseAffectionDifficultyMultiplier = clamped,
-                lastRoleEvaluationIndex = currentMessageCount
+                pendingUserConfirmation = false,
+                isBlacklisted = false,
+                detectionConfidence = maxOf(member.detectionConfidence, 90)
             )
         )
-        android.util.Log.d("CastMemberManager", "[B3.5] '${member.name}' role=$newRole mult=$clamped (affectionScore unchanged)")
     }
 
-    // ─── Silme (3.3) ─────────────────────────────────────────────────────────
+    suspend fun dismissPendingCastMember(botId: String, castMemberId: Long) = withContext(Dispatchers.IO) {
+        val member = castMemberDao.getCastMembersForBot(botId).firstOrNull { it.id == castMemberId } ?: return@withContext
+        castMemberDao.updateCastMember(member.copy(pendingUserConfirmation = false))
+    }
 
-    suspend fun deleteAutoAddedMember(botId: String, castMemberId: Long) = withContext(Dispatchers.IO) {
-        val member = castMemberDao.getCastMembersByBotId(botId).firstOrNull { it.id == castMemberId }
-        if (member != null && member.isAutoAdded) {
-            castMemberDao.deleteCastMemberById(castMemberId)
-            android.util.Log.d("CastMemberManager", "[delete] Auto-added '${member.name}' deleted from bot $botId")
+    suspend fun blacklistCastMember(botId: String, castMemberId: Long) = withContext(Dispatchers.IO) {
+        val member = castMemberDao.getCastMembersForBot(botId).firstOrNull { it.id == castMemberId }
+        castMemberDao.blacklistCastMember(castMemberId)
+        if (member != null) {
+            emotionDao.deleteByCharacterName(botId, member.name)
         }
     }
 
-    suspend fun deleteAndBlacklist(botId: String, castMemberId: Long) = withContext(Dispatchers.IO) {
-        val member = castMemberDao.getCastMembersByBotId(botId).firstOrNull { it.id == castMemberId }
+    suspend fun deleteAutoAddedCastMemberById(botId: String, castMemberId: Long) = withContext(Dispatchers.IO) {
+        val member = castMemberDao.getCastMembersForBot(botId).firstOrNull { it.id == castMemberId }
+        castMemberDao.deleteCastMember(castMemberId)
         if (member != null) {
-            addToBlacklist(botId, member.name)
-            castMemberDao.deleteCastMemberById(castMemberId)
-            android.util.Log.d("CastMemberManager", "[delete+blacklist] '${member.name}' blacklisted and deleted from bot $botId")
+            emotionDao.deleteByCharacterName(botId, member.name)
+        }
+    }
+
+    suspend fun deleteCharacterAndBlacklist(botId: String, characterName: String) = withContext(Dispatchers.IO) {
+        val cleanName = cleanCharacterNameCandidate(characterName)
+        val existing = castMemberDao.findByName(botId, cleanName) ?: castMemberDao.findByName(botId, characterName)
+        if (existing != null) {
+            castMemberDao.updateCastMember(
+                existing.copy(
+                    isBlacklisted = true,
+                    pendingUserConfirmation = false
+                )
+            )
+        } else if (cleanName.isNotBlank()) {
+            castMemberDao.insertCastMember(
+                CastMemberEntity(
+                    botId = botId,
+                    name = cleanName,
+                    description = "",
+                    isAutoAdded = true,
+                    isBlacklisted = true,
+                    pendingUserConfirmation = false
+                )
+            )
+        }
+        emotionDao.deleteByCharacterName(botId, characterName)
+        if (cleanName != characterName) {
+            emotionDao.deleteByCharacterName(botId, cleanName)
+        }
+    }
+
+    suspend fun updateCastMembersAgeForBot(botId: String, currentStoryCalendarDateStr: String) = withContext(Dispatchers.IO) {
+        val yearMatch = Regex("""\b(19\d{2}|20\d{2}|21\d{2})\b""").find(currentStoryCalendarDateStr)?.value?.toIntOrNull()
+            ?: return@withContext
+        val members = castMemberDao.getCastMembersForBot(botId)
+        for (member in members) {
+            val birthYear = Regex("""\b(19\d{2}|20\d{2}|21\d{2})\b""").find(member.birthDate)?.value?.toIntOrNull()
+            if (birthYear != null && yearMatch >= birthYear) {
+                val computedAge = (yearMatch - birthYear).coerceIn(1, 150)
+                if (computedAge != member.currentAge) {
+                    castMemberDao.updateCastMember(member.copy(currentAge = computedAge))
+                }
+            }
         }
     }
 }

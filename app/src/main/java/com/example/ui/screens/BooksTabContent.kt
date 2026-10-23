@@ -750,7 +750,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                             .aspectRatio(745f / 344f)
                     ) {
                         androidx.compose.foundation.Image(
-                            painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_kozmik_hero_banner),
+                            painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_botlist_cosmic_bg),
                             contentDescription = "Kozmik Sürükleniş | MCU Evreni",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()

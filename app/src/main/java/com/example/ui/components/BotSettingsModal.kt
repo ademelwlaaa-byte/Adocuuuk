@@ -1,6 +1,6 @@
 @file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 package com.example.ui.components
-@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+
 import com.example.ui.theme.AppColors
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -240,20 +240,20 @@ fun BotSettingsModal(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 16.dp)
-                .clip(RoundedCornerShape(22.dp))
+                .clip(RoundedCornerShape(24.dp))
                 .background(
                     androidx.compose.ui.graphics.Brush.verticalGradient(
-                        listOf(Color(0xFF150930), Color(0xFF0C0620))
+                        listOf(Color(0xF2160932), Color(0xF50B051D))
                     )
                 )
                 .border(
                     androidx.compose.foundation.BorderStroke(
-                        1.2.dp,
+                        1.3.dp,
                         androidx.compose.ui.graphics.Brush.linearGradient(
-                            listOf(Color(0xFF7C3AED), Color(0xFF4C1D95), Color(0xFF9333EA))
+                            listOf(Color(0xFFE9D5FF), Color(0xFF9333EA), Color(0xFF60A5FA), Color(0xFFC084FC))
                         )
                     ),
-                    RoundedCornerShape(22.dp)
+                    RoundedCornerShape(24.dp)
                 )
         ) {
             AppBackground()
@@ -262,7 +262,7 @@ fun BotSettingsModal(
                     .padding(20.dp)
                     .verticalScroll(rememberScrollState())
             ) {
-                // Premium Header
+                // Premium Aetheria Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -271,53 +271,66 @@ fun BotSettingsModal(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(13.dp))
-                                .background(
-                                    androidx.compose.ui.graphics.Brush.radialGradient(
-                                        listOf(Color(0xFF3B1070), Color(0xFF1C0848))
-                                    )
-                                )
+                                .size(42.dp)
+                                .clip(CircleShape)
                                 .border(
                                     1.2.dp,
                                     androidx.compose.ui.graphics.Brush.linearGradient(
-                                        listOf(Color(0xFF9333EA), Color(0xFF6D28D9))
+                                        listOf(Color(0xFFE9D5FF), Color(0xFFA855F7), Color(0xFF60A5FA))
                                     ),
-                                    RoundedCornerShape(13.dp)
+                                    CircleShape
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.Settings, contentDescription = null, tint = Color(0xFFCDA8FF), modifier = Modifier.size(20.dp))
+                            androidx.compose.foundation.Image(
+                                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_aetheria_orb),
+                                contentDescription = null,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape)
+                            )
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
-                            Text("Bot Profil & Özel Ayarlar", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                            Text("Duygu, bellek ve karakter ayarları", color = Color(0xFF9E8DC0), fontSize = 11.sp)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                androidx.compose.foundation.Image(
+                                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_title_sparkle),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp).padding(end = 4.dp)
+                                )
+                                Text(
+                                    text = "Bot Profil & Özel Ayarlar",
+                                    color = Color.White,
+                                    fontSize = 16.5.sp,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Text("Duygu, bellek ve karakter ayarları", color = Color(0xFFC4B5FD), fontSize = 11.sp)
                         }
                     }
                     Box(
                         modifier = Modifier
-                            .size(34.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0x30A855F7))
-                            .border(1.dp, Color(0x40A855F7), RoundedCornerShape(10.dp))
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(Brush.linearGradient(listOf(Color(0xD91E0E3A), Color(0xD9120826))))
+                            .border(
+                                1.1.dp,
+                                Brush.linearGradient(listOf(Color(0xFFE9D5FF), Color(0xFF9333EA), Color(0xFF6D28D9))),
+                                RoundedCornerShape(11.dp)
+                            )
                             .clickable { onDismiss() },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = "Kapat", tint = Color(0xFFCDA8FF), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Close, contentDescription = "Kapat", tint = Color(0xFFF3E8FF), modifier = Modifier.size(17.dp))
                     }
                 }
-                // Gradient separator
-                Spacer(modifier = Modifier.height(12.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(
-                            androidx.compose.ui.graphics.Brush.horizontalGradient(
-                                listOf(Color.Transparent, Color(0x607C3AED), Color.Transparent)
-                            )
-                        )
+                // Ornamental Aetheria diamond divider
+                Spacer(modifier = Modifier.height(8.dp))
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_header_divider),
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
+                    modifier = Modifier.fillMaxWidth().height(14.dp)
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))

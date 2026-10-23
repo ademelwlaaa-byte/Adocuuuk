@@ -1,6 +1,6 @@
 @file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 package com.example.ui.components
-@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+
 import com.example.ui.theme.AppColors
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -249,9 +249,10 @@ fun NeuralVaultModal(
 
     Dialog(onDismissRequest = onDismiss) {
         GradientCard(
-            cornerRadius = 20.dp,
-            fillColors = listOf(Color(0xFF0D0920), Color(0xFF080615)),
-            borderColors = listOf(Color(0xFF2A2A38), Color(0xFF1A1A28), Color(0xFF2A2A38)),
+            cornerRadius = 24.dp,
+            fillColors = listOf(Color(0xF215082E), Color(0xF50A041A)),
+            borderColors = listOf(Color(0xFFE9D5FF), Color(0xFF9333EA), Color(0xFF60A5FA), Color(0xFFC084FC)),
+            borderWidth = 1.3.dp,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 16.dp)
@@ -264,57 +265,84 @@ fun NeuralVaultModal(
                         .padding(18.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
-                // Header (Matching Screenshot 2)
+                // Header (Aetheria Neon & Gothic Glass)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Neural Vault",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Kapat", tint = Color.Gray)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_title_sparkle),
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp).padding(end = 6.dp)
+                        )
+                        Text(
+                            text = "Neural Vault • Bellek Mahzeni",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Brush.linearGradient(listOf(Color(0xD91E0E3A), Color(0xD9120826))))
+                            .border(1.dp, Color(0x66C084FC), RoundedCornerShape(10.dp))
+                            .clickable { onDismiss() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Kapat", tint = Color(0xFFE9D5FF), modifier = Modifier.size(16.dp))
                     }
                 }
+
+                Spacer(modifier = Modifier.height(6.dp))
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_header_divider),
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
+                    modifier = Modifier.fillMaxWidth().height(13.dp)
+                )
 
                 // Stats Pills Row
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 4.dp, bottom = 16.dp),
+                        .padding(top = 8.dp, bottom = 14.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Box(
                         modifier = Modifier
-                            .background(AppColors.CardElevated, RoundedCornerShape(12.dp))
+                            .background(Color(0xCC1B0B3A), RoundedCornerShape(50))
+                            .border(0.8.dp, Color(0x66C084FC), RoundedCornerShape(50))
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
-                        Text("${memoriesList.size + activeFacts.size + activeEvents.size} Kayıt", color = Color.LightGray, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Text("${memoriesList.size + activeFacts.size + activeEvents.size} Kayıt", color = Color(0xFFE9D5FF), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
                     Box(
                         modifier = Modifier
-                            .background(AppColors.CardElevated, RoundedCornerShape(12.dp))
+                            .background(Color(0xCC1B0B3A), RoundedCornerShape(50))
+                            .border(0.8.dp, Color(0x6660A5FA), RoundedCornerShape(50))
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
-                        Text("V4.0 Sync", color = Color.LightGray, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Text("V4.0 Sync", color = Color(0xFF93C5FD), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
                     Box(
                         modifier = Modifier
-                            .background(AppColors.CardElevated, RoundedCornerShape(12.dp))
+                            .background(Color(0xCC1B0B3A), RoundedCornerShape(50))
+                            .border(0.8.dp, Color(0x66A855F7), RoundedCornerShape(50))
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
-                        Text("Long-Term Memory", color = Color.LightGray, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Text("Long-Term Memory", color = Color(0xFFD8B4FE), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
                 // Inject Memory Box
                 GradientCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColors = listOf(Color(0xFF4C1D95), Color(0xFF2E1065), Color(0xFF4C1D95)),
+                    borderColors = listOf(Color(0xFFD8B4FE), Color(0xFF7C3AED), Color(0xFF60A5FA)),
                     borderWidth = 1.2.dp
                     ) {
                     Column(modifier = Modifier.padding(14.dp)) {

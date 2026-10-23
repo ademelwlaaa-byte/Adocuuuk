@@ -33,6 +33,11 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
 
+import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import com.example.R
+
 private data class StarParticle(
     val xRatio: Float,
     val yRatio: Float,
@@ -56,7 +61,7 @@ private data class AuroraBlob(
 @Composable
 fun AppBackground(
     modifier: Modifier = Modifier,
-    baseColor: Color = Color(0xFF070510),
+    baseColor: Color = Color(0xFF06030E),
     activeTab: String = "chats"
 ) {
     val stars = remember {
@@ -130,31 +135,21 @@ fun AppBackground(
         label = "twinkleTime"
     )
 
-    val centralPulse by infinite.animateFloat(
-        initialValue = 0.75f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "centralPulse"
-    )
-
-    val planetFloatY by infinite.animateFloat(
-        initialValue = -1.5f,
-        targetValue = 1.5f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(3800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "planetFloatY"
-    )
-
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(baseColor)
     ) {
+        // Photorealistic top-right dark-purple cratered planet & diagonal cosmic nebula
+        if (activeTab != "templates") {
+            Image(
+                painter = painterResource(id = R.drawable.img_botlist_cosmic_bg),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
@@ -168,13 +163,13 @@ fun AppBackground(
                 val cx = blob.xRatio * w + driftX
                 val cy = blob.yRatio * h + driftY
                 val radius = blob.radiusRatio * w
-                val alpha = 0.045f + 0.025f * sin(phase + idx)
+                val alpha = 0.038f + 0.020f * sin(phase + idx)
 
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            blob.color.copy(alpha = alpha * 1.5f),
-                            blob.color.copy(alpha = alpha * 0.5f),
+                            blob.color.copy(alpha = alpha * 1.4f),
+                            blob.color.copy(alpha = alpha * 0.45f),
                             Color.Transparent
                         ),
                         center = Offset(cx, cy),
@@ -207,187 +202,12 @@ fun AppBackground(
                 )
             }
 
-            // ── Layer 3: Seamless Top-Right Cosmic Planet & Atmospheric Nebula ─
-            if (activeTab == "books") {
-                // Exact top-right cosmic planet limb & crescent rim from Kozmik Sürükleniş reference
-                val planetCenter = Offset(w * 0.96f, h * 0.042f + planetFloatY.dp.toPx())
-                val planetRadius = w * 0.235f
-
-                // Soft cosmic nebula mist behind top-right pill & planet limb
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Color(0xFF7C3AED).copy(alpha = 0.26f * centralPulse),
-                            Color(0xFF4C1D95).copy(alpha = 0.14f * centralPulse),
-                            Color.Transparent
-                        ),
-                        center = Offset(w * 0.80f, h * 0.068f),
-                        radius = w * 0.44f
-                    ),
-                    center = Offset(w * 0.80f, h * 0.068f),
-                    radius = w * 0.44f
-                )
-
-                // Planet sphere body seamlessly blended into deep space
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Color(0xFF28125A).copy(alpha = 0.92f),
-                            Color(0xFF160836).copy(alpha = 0.95f),
-                            Color(0xFF090418).copy(alpha = 0.98f)
-                        ),
-                        center = Offset(
-                            planetCenter.x - planetRadius * 0.28f,
-                            planetCenter.y + planetRadius * 0.22f
-                        ),
-                        radius = planetRadius * 1.1f
-                    ),
-                    center = planetCenter,
-                    radius = planetRadius
-                )
-
-                // Subtle surface cloud texture inside planet limb
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Color(0x38A855F7),
-                            Color(0x186366F1),
-                            Color.Transparent
-                        ),
-                        center = Offset(
-                            planetCenter.x - planetRadius * 0.42f,
-                            planetCenter.y + planetRadius * 0.35f
-                        ),
-                        radius = planetRadius * 0.65f
-                    ),
-                    center = Offset(
-                        planetCenter.x - planetRadius * 0.42f,
-                        planetCenter.y + planetRadius * 0.35f
-                    ),
-                    radius = planetRadius * 0.65f
-                )
-
-                // Soft outer atmospheric crescent glow along bottom-left limb
-                drawIntoCanvas { canvas ->
-                    val rimGlowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                        style = android.graphics.Paint.Style.STROKE
-                        strokeWidth = 6.dp.toPx()
-                        strokeCap = android.graphics.Paint.Cap.ROUND
-                        color = Color(0xFFA855F7).copy(alpha = 0.52f * centralPulse).toArgb()
-                        maskFilter = android.graphics.BlurMaskFilter(
-                            10.dp.toPx(),
-                            android.graphics.BlurMaskFilter.Blur.NORMAL
-                        )
-                    }
-                    val rect = android.graphics.RectF(
-                        planetCenter.x - planetRadius,
-                        planetCenter.y - planetRadius,
-                        planetCenter.x + planetRadius,
-                        planetCenter.y + planetRadius
-                    )
-                    canvas.nativeCanvas.drawArc(rect, 102f, 118f, false, rimGlowPaint)
-                }
-
-                // Crisp illuminated crescent edge arc
-                drawArc(
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            Color(0xFFC084FC).copy(alpha = 0.72f * centralPulse),
-                            Color(0xFFF3E8FF).copy(alpha = 0.92f * centralPulse),
-                            Color(0xFF9333EA).copy(alpha = 0.58f * centralPulse),
-                            Color.Transparent
-                        ),
-                        start = Offset(planetCenter.x - planetRadius, planetCenter.y),
-                        end = Offset(planetCenter.x, planetCenter.y + planetRadius)
-                    ),
-                    startAngle = 104f,
-                    sweepAngle = 114f,
-                    useCenter = false,
-                    topLeft = Offset(planetCenter.x - planetRadius, planetCenter.y - planetRadius),
-                    size = Size(planetRadius * 2f, planetRadius * 2f),
-                    style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round)
-                )
-            } else if (activeTab != "templates") {
-                // Seamless 3D dark purple cratered moon & diagonal cosmic mist for Botlarım header
-                val moonCenter = Offset(w * 0.745f, h * 0.088f + planetFloatY.dp.toPx())
-                val moonRadius = w * 0.115f
-
-                // Diagonal nebula mist behind moon
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Color(0xFF6D28D9).copy(alpha = 0.24f * centralPulse),
-                            Color(0xFF4C1D95).copy(alpha = 0.12f * centralPulse),
-                            Color.Transparent
-                        ),
-                        center = Offset(w * 0.66f, h * 0.085f),
-                        radius = w * 0.36f
-                    ),
-                    center = Offset(w * 0.66f, h * 0.085f),
-                    radius = w * 0.36f
-                )
-
-                // 3D Moon sphere shaded from top-left violet to bottom-right deep shadow
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Color(0xFF3B1A78).copy(alpha = 0.88f),
-                            Color(0xFF1F0C47).copy(alpha = 0.92f),
-                            Color(0xFF0A041A).copy(alpha = 0.96f)
-                        ),
-                        center = Offset(
-                            moonCenter.x - moonRadius * 0.35f,
-                            moonCenter.y - moonRadius * 0.25f
-                        ),
-                        radius = moonRadius * 1.35f
-                    ),
-                    center = moonCenter,
-                    radius = moonRadius
-                )
-
-                // Subtle surface crater/nebula mottling inside the sphere
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Color(0x339333EA),
-                            Color.Transparent
-                        ),
-                        center = Offset(moonCenter.x - moonRadius * 0.25f, moonCenter.y + moonRadius * 0.2f),
-                        radius = moonRadius * 0.55f
-                    ),
-                    center = Offset(moonCenter.x - moonRadius * 0.25f, moonCenter.y + moonRadius * 0.2f),
-                    radius = moonRadius * 0.55f
-                )
-
-                // Soft crescent rim along top-left & bottom-left of the moon
-                drawArc(
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            Color(0xAA9333EA),
-                            Color(0xCCD8B4FE),
-                            Color(0x887C3AED),
-                            Color.Transparent
-                        ),
-                        start = Offset(moonCenter.x - moonRadius, moonCenter.y - moonRadius),
-                        end = Offset(moonCenter.x, moonCenter.y + moonRadius)
-                    ),
-                    startAngle = 115f,
-                    sweepAngle = 155f,
-                    useCenter = false,
-                    topLeft = Offset(moonCenter.x - moonRadius, moonCenter.y - moonRadius),
-                    size = Size(moonRadius * 2f, moonRadius * 2f),
-                    style = Stroke(width = 1.4.dp.toPx(), cap = StrokeCap.Round)
-                )
-            }
-
-            // ── Layer 4: Subtle bottom ambient reflection ────────────────────
+            // ── Layer 3: Subtle bottom ambient reflection ────────────────────
             val bottomCenter = Offset(w * 0.5f, h * 1.0f)
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        Color(0xFF4C1D95).copy(alpha = 0.18f),
+                        Color(0xFF4C1D95).copy(alpha = 0.16f),
                         Color.Transparent
                     ),
                     center = bottomCenter,

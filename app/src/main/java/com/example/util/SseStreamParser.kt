@@ -90,5 +90,5 @@ object SseStreamParser {
     }
 
     private fun String.toMediaTypeOrNull() =
-        okhttp3.MediaType.parse(this)
+        with(okhttp3.MediaType) { this@toMediaTypeOrNull.toMediaTypeOrNull() }
 }

@@ -1,6 +1,6 @@
 @file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 package com.example.ui.components
-@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+
 import com.example.ui.theme.AppColors
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -400,14 +400,14 @@ fun GlobalSettingsModal(
                 .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
                 .background(
                     androidx.compose.ui.graphics.Brush.verticalGradient(
-                        listOf(AppColors.CardAbyss, AppColors.CardNight)
+                        listOf(Color(0xF215082E), Color(0xF50B041B))
                     )
                 )
                 .border(
                     androidx.compose.foundation.BorderStroke(
-                        1.dp,
+                        1.3.dp,
                         androidx.compose.ui.graphics.Brush.linearGradient(
-                            listOf(Color(0xFF6D28D9), Color(0xFF3B1070), Color(0xFF7C3AED))
+                            listOf(Color(0xFFE9D5FF), Color(0xFF9333EA), Color(0xFF60A5FA), Color(0xFFC084FC))
                         )
                     ),
                     androidx.compose.foundation.shape.RoundedCornerShape(24.dp)
@@ -416,89 +416,95 @@ fun GlobalSettingsModal(
             AppBackground()
 
             Column(modifier = Modifier.fillMaxSize()) {
-                // PREMIUM HEADER
-                Box(
+                // PREMIUM AETHERIA HEADER
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(
                             androidx.compose.ui.graphics.Brush.verticalGradient(
-                                listOf(Color(0xFF1C0D3C), Color(0xFF130826))
+                                listOf(Color(0xE61C0B3B), Color(0xCC110624))
                             )
                         )
+                        .padding(top = 14.dp, bottom = 6.dp)
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 14.dp),
+                            .padding(horizontal = 18.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(13.dp))
-                                    .background(
-                                        androidx.compose.ui.graphics.Brush.radialGradient(
-                                            listOf(Color(0xFF3B1070), Color(0xFF1C0848))
-                                        )
-                                    )
+                                    .size(42.dp)
+                                    .clip(CircleShape)
                                     .border(
                                         androidx.compose.foundation.BorderStroke(
                                             1.2.dp,
                                             androidx.compose.ui.graphics.Brush.linearGradient(
-                                                listOf(Color(0xFF9333EA), Color(0xFF6D28D9))
+                                                listOf(Color(0xFFE9D5FF), Color(0xFFA855F7), Color(0xFF60A5FA))
                                             )
                                         ),
-                                        androidx.compose.foundation.shape.RoundedCornerShape(13.dp)
+                                        CircleShape
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Settings,
+                                androidx.compose.foundation.Image(
+                                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_aetheria_orb),
                                     contentDescription = null,
-                                    tint = Color(0xFFCDA8FF),
-                                    modifier = Modifier.size(20.dp)
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
                                 )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
-                                Text(
-                                    text = "Uygulama & AI Ayarları",
-                                    color = Color.White,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    androidx.compose.foundation.Image(
+                                        painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_title_sparkle),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp).padding(end = 4.dp)
+                                    )
+                                    Text(
+                                        text = "Uygulama & AI Ayarları",
+                                        color = Color.White,
+                                        fontSize = 17.sp,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                                 Text(
                                     text = "Model, API anahtarları ve filtreler",
-                                    color = Color(0xFF9E8DC0),
+                                    color = Color(0xFFC4B5FD),
                                     fontSize = 11.sp
                                 )
                             }
                         }
                         Box(
                             modifier = Modifier
-                                .size(34.dp)
-                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
-                                .background(Color(0x30A855F7))
-                                .border(1.dp, Color(0x40A855F7), androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
+                                .size(36.dp)
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(11.dp))
+                                .background(Brush.linearGradient(listOf(Color(0xD91E0E3A), Color(0xD9120826))))
+                                .border(
+                                    1.1.dp,
+                                    Brush.linearGradient(listOf(Color(0xFFE9D5FF), Color(0xFF9333EA), Color(0xFF6D28D9))),
+                                    androidx.compose.foundation.shape.RoundedCornerShape(11.dp)
+                                )
                                 .clickable { onDismiss() },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.Close, contentDescription = "Kapat", tint = Color(0xFFCDA8FF), modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.Close, contentDescription = "Kapat", tint = Color(0xFFF3E8FF), modifier = Modifier.size(17.dp))
                         }
                     }
-                    // Bottom separator line
-                    Box(
+                    Spacer(modifier = Modifier.height(8.dp))
+                    androidx.compose.foundation.Image(
+                        painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_header_divider),
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(1.dp)
-                            .align(Alignment.BottomCenter)
-                            .background(
-                                androidx.compose.ui.graphics.Brush.horizontalGradient(
-                                    listOf(Color.Transparent, Color(0x607C3AED), Color.Transparent)
-                                )
-                            )
+                            .padding(horizontal = 12.dp)
+                            .height(14.dp)
                     )
                 }
 

@@ -51,7 +51,7 @@ class RoutineNotificationWorker(
         if (!AppFeatureFlags.isRoutineNotifEnabled) return Result.success()
 
         val db = AppDatabase.getInstance(ctx)
-        val bots = try { db.botDao().getAllBotsDirect() } catch (_: Exception) { return Result.success() }
+        val bots = try { db.botDao().getAllBotsList() } catch (_: Exception) { return Result.success() }
         val today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureChannel(nm)

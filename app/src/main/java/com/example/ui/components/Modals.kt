@@ -231,22 +231,22 @@ fun CollapsibleSettingsOption(
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .graphicsLayer { scaleX = rowScale; scaleY = rowScale }
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(
                 if (isExpanded)
-                    androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF1A0D3A), Color(0xFF0F0826)))
+                    androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xD91E0D3E), Color(0xD9110726)))
                 else
-                    androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF120A28), Color(0xFF0C0720)))
+                    androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xBF15092E), Color(0xBF0D0620)))
             )
             .border(
                 androidx.compose.foundation.BorderStroke(
-                    if (isExpanded) 1.3.dp else 0.8.dp,
+                    if (isExpanded) 1.3.dp else 1.dp,
                     if (isExpanded)
-                        androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF9333EA), Color(0xFF6D28D9), Color(0xFF7C3AED)))
+                        androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFFE9D5FF), Color(0xFF9333EA), Color(0xFF60A5FA), Color(0xFFC084FC)))
                     else
-                        androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0x40A855F7), Color(0x204C1D95)))
+                        androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0x66C084FC), Color(0x3360A5FA), Color(0x557C3AED)))
                 ),
-                RoundedCornerShape(14.dp)
+                RoundedCornerShape(16.dp)
             )
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
@@ -355,36 +355,67 @@ fun FallbackLogModal(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Surface(
+        Box(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
                 .fillMaxHeight(0.75f)
-                .clip(RoundedCornerShape(20.dp)),
-            color = AppColors.CardAbyss,
-            border = androidx.compose.foundation.BorderStroke(1.dp, EmochiBorder)
+                .clip(RoundedCornerShape(24.dp))
+                .background(
+                    Brush.verticalGradient(listOf(Color(0xF2170A32), Color(0xF50C051E)))
+                )
+                .border(
+                    androidx.compose.foundation.BorderStroke(
+                        1.3.dp,
+                        Brush.linearGradient(listOf(Color(0xFFE9D5FF), Color(0xFF9333EA), Color(0xFF60A5FA), Color(0xFFC084FC)))
+                    ),
+                    RoundedCornerShape(24.dp)
+                )
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp)
+                    .padding(18.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "📋 Sağlayıcı Deneme Logları (Fallback Chain)",
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Kapat", tint = Color.White)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_title_sparkle),
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp).padding(end = 6.dp)
+                        )
+                        Text(
+                            text = "Sağlayıcı Deneme Logları",
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0x30A855F7))
+                            .border(1.dp, Color(0x55C084FC), RoundedCornerShape(10.dp))
+                            .clickable { onDismiss() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Kapat", tint = Color(0xFFE9D5FF), modifier = Modifier.size(16.dp))
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(6.dp))
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_header_divider),
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
+                    modifier = Modifier.fillMaxWidth().height(12.dp)
+                )
+                Spacer(modifier = Modifier.height(10.dp))
 
                 if (logs.isEmpty()) {
                     Box(
@@ -520,13 +551,25 @@ fun BotQuickProfileSheet(
     val context = LocalContext.current
 
     Dialog(onDismissRequest = onDismiss) {
-        Surface(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 12.dp),
-            shape = RoundedCornerShape(20.dp),
-            color = EmochiSurface,
-            border = androidx.compose.foundation.BorderStroke(1.dp, EmochiBorder)
+                .padding(vertical = 12.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0xF2170A32), Color(0xF50C051E), Color(0xF214082C))
+                    )
+                )
+                .border(
+                    androidx.compose.foundation.BorderStroke(
+                        1.3.dp,
+                        Brush.linearGradient(
+                            listOf(Color(0xFFE9D5FF), Color(0xFF9333EA), Color(0xFF60A5FA), Color(0xFFC084FC))
+                        )
+                    ),
+                    RoundedCornerShape(24.dp)
+                )
         ) {
             Column(
                 modifier = Modifier
@@ -539,66 +582,105 @@ fun BotQuickProfileSheet(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (bot.avatarUrl.isNotBlank()) {
-                            AsyncImage(
-                                model = bot.avatarUrl,
-                                contentDescription = displayName,
-                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        Box(contentAlignment = Alignment.Center) {
+                            if (bot.avatarUrl.isNotBlank()) {
+                                AsyncImage(
+                                    model = bot.avatarUrl,
+                                    contentDescription = displayName,
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(CircleShape)
+                                        .border(
+                                            1.5.dp,
+                                            Brush.linearGradient(listOf(Color(0xFFE9D5FF), Color(0xFFA855F7), Color(0xFF60A5FA))),
+                                            CircleShape
+                                        )
+                                )
+                            } else {
+                                OrbView(hue = 280f, size = 48.dp)
+                            }
+                            Box(
                                 modifier = Modifier
-                                    .size(44.dp)
+                                    .size(12.dp)
+                                    .align(Alignment.BottomEnd)
                                     .clip(CircleShape)
-                                    .border(1.dp, EmochiBorder, CircleShape)
+                                    .background(Color(0xFF22C55E))
+                                    .border(1.5.dp, Color(0xFF120726), CircleShape)
                             )
-                        } else {
-                            OrbView(hue = 280f, size = 44.dp)
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
-                            Text(
-                                text = displayName,
-                                color = EmochiTextPrimary,
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                androidx.compose.foundation.Image(
+                                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_title_sparkle),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp).padding(end = 4.dp)
+                                )
+                                Text(
+                                    text = displayName,
+                                    color = Color.White,
+                                    fontSize = 17.5.sp,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
                             Box(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isUniverse) AppColors.CardSlate else AppColors.Hex_1E2038)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(Brush.horizontalGradient(listOf(Color(0xFF25104A), Color(0xFF160830))))
+                                    .border(0.8.dp, Color(0x66C084FC), RoundedCornerShape(50))
+                                    .padding(horizontal = 8.dp, vertical = 2.dp)
                             ) {
                                 Text(
-                                    text = if (isUniverse) "Evren Senaryosu" else "Bireysel Karakter",
-                                    color = EmochiPrimary,
+                                    text = if (isUniverse) "✦ Evren Senaryosu" else "✦ Bireysel Karakter",
+                                    color = Color(0xFFE9D5FF),
                                     fontSize = 10.5.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
                         }
                     }
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Kapat", tint = EmochiTextSecondary)
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0x30A855F7))
+                            .border(1.dp, Color(0x50C084FC), RoundedCornerShape(10.dp))
+                            .clickable { onDismiss() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Kapat", tint = Color(0xFFE9D5FF), modifier = Modifier.size(16.dp))
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_chat_header_divider),
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
+                    modifier = Modifier.fillMaxWidth().height(13.dp)
+                )
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Personality / Scenario Card
                 GradientCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColors = listOf(Color(0xFF4C1D95), Color(0xFF2E1065), Color(0xFF4C1D95)),
+                    borderColors = listOf(Color(0xFFD8B4FE), Color(0xFF7C3AED), Color(0xFF60A5FA)),
                     borderWidth = 1.2.dp
                     ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
                             text = if (isUniverse) "🌌 Evren Senaryosu" else "🎭 Karakter Kişiliği",
-                            color = EmochiPrimary,
+                            color = Color(0xFFE9D5FF),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = if (isUniverse) bot.scenario else bot.aiPersonality,
-                            color = EmochiTextSecondary,
+                            color = Color(0xFFE2D9F3),
                             fontSize = 12.sp
                         )
                     }
@@ -1244,5 +1326,3 @@ fun ProviderReliabilityDashboardUI() {
         }
     }
 }
-
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)

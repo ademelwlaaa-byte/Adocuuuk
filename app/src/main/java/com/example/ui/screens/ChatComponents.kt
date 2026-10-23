@@ -149,6 +149,14 @@ import com.example.ui.components.customTextFieldColors
 import com.example.ui.theme.EmochiError
 import com.example.ui.theme.EmochiSurface
 
+private data class ChatCosmicParticle(
+    val xRatio: Float,
+    val yRatio: Float,
+    val radius: Float,
+    val baseAlpha: Float,
+    val speed: Float
+)
+
 @Composable
 fun CosmicParticleBackground(
     accentColor: Color,
@@ -179,7 +187,7 @@ fun CosmicParticleBackground(
 
     val particles = remember {
         List(35) {
-            CosmicParticle(
+            ChatCosmicParticle(
                 xRatio = (0..100).random() / 100f,
                 yRatio = (0..100).random() / 100f,
                 radius = (15..45).random() / 10f,

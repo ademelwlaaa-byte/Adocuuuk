@@ -1891,10 +1891,3 @@ fun getAppPresets(isEnglish: Boolean): List<BotEntity> {
         )
     )
 }
-
-
-
-@OptIn(ExperimentalMaterial3Api::class)
-
-
-
